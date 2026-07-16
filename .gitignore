@@ -1,2 +1,6 @@
 sample/
 results/*
+**/__pycache__/**
+config/generated/
+sweep/logs/
+sweep/manifest.jsonl

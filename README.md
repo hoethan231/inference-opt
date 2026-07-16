@@ -81,6 +81,8 @@ The knobs:
 | `KV_CACHE_DTYPE` | `--kv-cache-dtype` | KV-cache precision (`fp8` halves its size) |
 | `GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization` | fraction of VRAM to use |
 | `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` | GPUs per replica (1 here) |
+| `BLOCK_SIZE` | `--block-size` | KV-cache block size (tokens/block) |
+| `VLLM_ATTENTION_BACKEND` | *(env var, read directly by vLLM)* | attention kernel backend; empty = auto-select |
 | `EXTRA_ARGS` | *(appended verbatim)* | any other flag, e.g. `--enforce-eager`, `--speculative-config '...'` |
 
 Anything not promoted to its own key goes in `EXTRA_ARGS` — the escape hatch for
@@ -121,6 +123,76 @@ Pass your own tag to line runs up with a config: `./run.sh bench both ms128-pf20
 - `nemotron-model-cache` PVC with the NVFP4 weights already downloaded — the
   server mounts it, so there is **no download step** and startup is fast.
 - `guidellm-results-pvc` for results; `hf-token-secret` for the token.
+
+## Grid-searching hyperparameters (`sweep/`)
+
+`sweep/` automates the tune-loop above across many configs, one at a time,
+and rolls the results into a single CSV.
+
+```
+sweep/grid.py          # the sweep plan: baseline + one-factor-at-a-time (OFAT) values
+sweep/run_sweep.py      # driver: deploy -> bench -> pull, once per config, logged + resumable
+sweep/aggregate.py      # scans results/*.json + the manifest -> results/aggregated.csv
+sweep/manifest.jsonl    # append-only record of every config run (tag, params, status, timing)
+sweep/logs/<tag>.log    # full run.sh output per config
+config/generated/       # per-config ConfigMap YAMLs rendered by run_sweep.py
+```
+
+**Why OFAT, not full factorial:** sweeping N params with K values each is
+K^N configs. `sweep/grid.py` instead holds everything at the baseline
+(current `config/vllm-params.yaml` values) and changes **one** knob per run,
+so cost is linear: `sum(len(values) - 1) + 1` configs. See it and its
+estimated run count/time with:
+
+```bash
+python3 sweep/grid.py            # print the plan as a table
+python3 sweep/run_sweep.py --dry-run   # plan + wall-clock estimate, no cluster calls
+```
+
+Currently swept (edit `SWEEP` in `sweep/grid.py` to add/remove/change values):
+
+| Param | Values tried | ConfigMap key |
+|---|---|---|
+| `kv_cache_dtype` | auto, fp8, fp8_e4m3, fp8_e5m2 | `KV_CACHE_DTYPE` |
+| `max_num_seqs` | 32, 64, 128, 256 | `MAX_NUM_SEQS` |
+| `max_num_batched_tokens` | 512, 1024, 2048, 4096, 8192 | `MAX_NUM_BATCHED_TOKENS` |
+| `attention_backend` | auto, FLASHINFER, TRITON_ATTN_VLLM_V1 | `VLLM_ATTENTION_BACKEND` |
+| `gpu_memory_utilization` | 0.80, 0.85, 0.90, 0.95 | `GPU_MEMORY_UTILIZATION` |
+| `block_size` | 16, 32 | `BLOCK_SIZE` |
+| `max_model_len` | 8192, 32768, 131072, 262144 | `MAX_MODEL_LEN` |
+
+### Running the sweep
+
+```bash
+python3 sweep/run_sweep.py                      # full OFAT sweep, both benchmarks per config (~9h for 20 configs)
+python3 sweep/run_sweep.py --bench rate         # faster: rate test only per config
+python3 sweep/run_sweep.py --resume             # rerun after an interruption, skips completed configs
+python3 sweep/run_sweep.py --only max-num-seqs  # rerun/debug just one parameter's variants
+python3 sweep/run_sweep.py --stop-on-error      # abort on first failed config instead of continuing
+```
+
+Each config: renders `config/generated/vllm-params.<tag>.yaml` (baseline +
+one override) → `PARAMS=<that file> ./run.sh all <bench> <tag>` (deploy +
+wait Ready + benchmark) → `./run.sh pull <tag>`. Every attempt — success or
+failure — gets one line in `sweep/manifest.jsonl` and a full log in
+`sweep/logs/<tag>.log`, so the sweep can be safely killed and resumed.
+
+### Aggregating results
+
+```bash
+python3 sweep/aggregate.py
+# -> results/aggregated.csv
+```
+
+One row per (config, test type, load level): `rate` results contribute 1 row,
+`concurrent` results contribute up to 4 (one per stream level: 8/16/32/64).
+Columns include the tag/param/value being swept, the full effective config
+(`cfg_*`), request outcome counts + `error_rate`, and mean/p50/p90/p99 for
+latency (`request_latency_s`, `ttft_ms`, `tpot_ms`, `itl_ms`) and throughput
+(`requests_per_second`, `output_tokens_per_second`, `tokens_per_second`,
+`prompt_tokens_per_second`). Load the CSV into a spreadsheet or
+`pandas.read_csv(...)` to plot/pivot, e.g. per-param sensitivity or a
+latency-vs-throughput frontier.
 
 ## SGLang (later)
 

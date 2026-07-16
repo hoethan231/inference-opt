@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""
+grid.py - defines the one-factor-at-a-time (OFAT) hyperparameter sweep.
+
+Every entry in SWEEP varies exactly one vLLM knob while holding everything
+else at BASELINE. That keeps the run count linear (sum of |values| - 1)
+instead of a full-factorial product, per the sweep design.
+
+Run standalone to print the plan:
+    python3 sweep/grid.py
+    python3 sweep/grid.py --json
+"""
+import argparse
+import json
+import re
+
+# Baseline = the values currently shipped in config/vllm-params.yaml. Every
+# swept run starts here and changes exactly one key.
+BASELINE = {
+    "GPU_MEMORY_UTILIZATION": "0.9",
+    "MAX_MODEL_LEN": "262144",
+    "KV_CACHE_DTYPE": "fp8",
+    "MAX_NUM_SEQS": "128",
+    "MAX_NUM_BATCHED_TOKENS": "2048",
+    "BLOCK_SIZE": "16",
+    "VLLM_ATTENTION_BACKEND": "",  # "" = vLLM auto-selects a backend
+}
+
+# Human label for VLLM_ATTENTION_BACKEND="" in tags/CSVs, since an empty
+# string makes a bad tag/column value.
+AUTO_LABEL = "auto"
+
+# One entry per swept parameter: which ConfigMap key it maps to, and the
+# candidate values to try (baseline's own value is skipped automatically
+# since the "baseline" run already covers it).
+SWEEP = [
+    dict(
+        param="kv_cache_dtype",
+        key="KV_CACHE_DTYPE",
+        values=["auto", "fp8", "fp8_e4m3", "fp8_e5m2"],
+        note="KV-cache storage precision",
+    ),
+    dict(
+        param="max_num_seqs",
+        key="MAX_NUM_SEQS",
+        values=["32", "64", "128", "256"],
+        note="max concurrent running sequences (scheduler 'bouncer')",
+    ),
+    dict(
+        param="max_num_batched_tokens",
+        key="MAX_NUM_BATCHED_TOKENS",
+        values=["512", "1024", "2048", "4096", "8192"],
+        note="prefill chunk size (scheduler 'chewer')",
+    ),
+    dict(
+        param="attention_backend",
+        key="VLLM_ATTENTION_BACKEND",
+        values=["", "FLASHINFER", "TRITON_ATTN_VLLM_V1"],
+        note="VLLM_ATTENTION_BACKEND env var; XFORMERS omitted (V0-only, "
+        "not supported on the V1 engine used here)",
+    ),
+    dict(
+        param="gpu_memory_utilization",
+        key="GPU_MEMORY_UTILIZATION",
+        values=["0.80", "0.85", "0.9", "0.95"],
+        note="fraction of VRAM reserved for weights + KV cache",
+    ),
+    dict(
+        param="block_size",
+        key="BLOCK_SIZE",
+        values=["16", "32"],
+        note="KV-cache block size (tokens/block)",
+    ),
+    dict(
+        param="max_model_len",
+        key="MAX_MODEL_LEN",
+        values=["8192", "32768", "131072", "262144"],
+        note="max context window; smaller frees more KV-cache blocks",
+    ),
+]
+
+
+def sanitize(value: str) -> str:
+    """RFC-1123-ish label: lowercase alnum + dashes, matches run.sh's sanitize()."""
+    s = str(value).lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s or "default"
+
+
+def display_value(key: str, value: str) -> str:
+    if key == "VLLM_ATTENTION_BACKEND" and value == "":
+        return AUTO_LABEL
+    return value
+
+
+def build_plan():
+    """Returns the ordered list of sweep points: baseline + one per (param, value)."""
+    plan = [
+        dict(tag="baseline", param="baseline", key=None, value=None, overrides={})
+    ]
+    for sweep in SWEEP:
+        key = sweep["key"]
+        baseline_value = BASELINE[key]
+        for value in sweep["values"]:
+            if value == baseline_value:
+                continue  # already covered by the baseline run
+            tag = f"{sanitize(sweep['param'])}-{sanitize(display_value(key, value))}"
+            plan.append(
+                dict(
+                    tag=tag,
+                    param=sweep["param"],
+                    key=key,
+                    value=value,
+                    overrides={key: value},
+                )
+            )
+    return plan
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--json", action="store_true", help="print the plan as JSON")
+    args = ap.parse_args()
+
+    plan = build_plan()
+    if args.json:
+        print(json.dumps(plan, indent=2))
+        return
+
+    print(f"{'tag':<32} {'param':<24} {'value':<12} overrides")
+    print("-" * 90)
+    for item in plan:
+        print(
+            f"{item['tag']:<32} {item['param']:<24} "
+            f"{display_value(item['key'], item['value']) if item['key'] else '(baseline)':<12} "
+            f"{item['overrides']}"
+        )
+    print("-" * 90)
+    print(f"{len(plan)} configs total (1 baseline + {len(plan) - 1} OFAT variants)")
+
+
+if __name__ == "__main__":
+    main()

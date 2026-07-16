@@ -21,7 +21,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS=vllm-inf
 DEPLOY="$HERE/deployments/vllm.yaml"
-PARAMS="$HERE/config/vllm-params.yaml"
+PARAMS="${PARAMS:-$HERE/config/vllm-params.yaml}"
 SCEN_DIR="$HERE/scenarios"
 JOBS="$HERE/jobs"
 RESULTS_DIR="${RESULTS_DIR:-$HERE/results}"
