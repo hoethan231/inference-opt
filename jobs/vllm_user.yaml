@@ -1,0 +1,72 @@
+# =============================================================================
+# Benchmark Job: CONCURRENT-USERS test (8/16/32/64 streams, coding-agent).
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vllm-users-__TAG__
+  namespace: vllm-inf
+  labels:
+    app: guidellm
+    bench.suite: vllm
+    bench.test: concurrent
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: guidellm
+        bench.suite: vllm
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: guidellm
+          image: ghcr.io/vllm-project/guidellm:v0.7.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: vllm-params
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token-secret
+                  key: HF_TOKEN
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              SVC="http://vllm-svc.vllm-inf.svc.cluster.local:8000"
+              sed "s#http://localhost:8000#${SVC}#" /scenarios/coding-agent-users.json > /tmp/scenario.json
+              echo "Running GuideLLM CONCURRENT-USERS test against ${SVC}"
+              exec guidellm run \
+                --scenario /tmp/scenario.json \
+                --tokenizer "{\"kind\":\"huggingface_auto\",\"model\":\"${MODEL_NAME}\",\"load_kwargs\":{\"trust_remote_code\":true}}" \
+                --output kind=console \
+                --output kind=json,path=/app/results/vllm-users-__TAG__.json \
+                --output kind=html,path=/app/results/vllm-users-__TAG__.html
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "6"
+              memory: 16Gi
+          volumeMounts:
+            - name: results
+              mountPath: /app/results
+            - name: scenarios
+              mountPath: /scenarios
+              readOnly: true
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: guidellm-results-pvc
+        - name: scenarios
+          configMap:
+            name: coding-agent-scenarios
