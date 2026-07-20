@@ -40,6 +40,8 @@ BASE_PARAMS_FILE = REPO / "config" / "vllm-params.yaml"
 GENERATED_DIR = REPO / "config" / "generated"
 LOGS_DIR = HERE / "logs"
 MANIFEST_PATH = HERE / "manifest.jsonl"
+NAMESPACE = "vllm-inf"
+OWN_GPU_OWNERS = {"vllm-server", "vllm"}
 
 sys.path.insert(0, str(HERE))
 from grid import build_plan, sanitize  # noqa: E402
@@ -84,7 +86,59 @@ def load_manifest_status():
     return status
 
 
-def run_one(item, base_manifest, bench):
+def foreign_gpu_holders():
+    """Pods in the namespace requesting nvidia.com/gpu that aren't our own
+    vllm-server. Returns a list of pod names (empty if the GPU is free/ours)."""
+    try:
+        out = subprocess.check_output(
+            ["kubectl", "get", "pods", "-n", NAMESPACE, "-o", "json"],
+            universal_newlines=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print("warning: could not check GPU occupancy: {}".format(exc))
+        return []
+    pods = json.loads(out).get("items", [])
+    holders = []
+    for pod in pods:
+        name = pod.get("metadata", {}).get("name", "")
+        app_label = pod.get("metadata", {}).get("labels", {}).get("app", "")
+        if app_label in OWN_GPU_OWNERS or name.startswith("vllm-server"):
+            continue
+        for c in pod.get("spec", {}).get("containers", []):
+            if "nvidia.com/gpu" in (c.get("resources", {}).get("requests", {}) or {}):
+                phase = pod.get("status", {}).get("phase", "?")
+                holders.append("{} ({})".format(name, phase))
+                break
+    return holders
+
+
+def wait_for_free_gpu(timeout_s):
+    """Poll until no foreign pod is holding the GPU, or timeout_s elapses."""
+    deadline = time.time() + timeout_s
+    warned = False
+    while time.time() < deadline:
+        holders = foreign_gpu_holders()
+        if not holders:
+            return True
+        if not warned:
+            print(
+                "GPU currently held by another workload: {} — waiting up to "
+                "{:.0f} min for it to free up before deploying "
+                "(this is a shared single-GPU cluster)".format(holders, timeout_s / 60)
+            )
+            warned = True
+        time.sleep(20)
+    holders = foreign_gpu_holders()
+    if holders:
+        print(
+            "WARNING: GPU still held by {} after waiting; proceeding anyway "
+            "(run.sh's free_gpu will try to scale it down, but it may come "
+            "back and cause this config to fail).".format(holders)
+        )
+    return not holders
+
+
+def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
     tag = item["tag"]
     cfg_path = generate_configmap(base_manifest, item["overrides"], tag)
 
@@ -92,7 +146,8 @@ def run_one(item, base_manifest, bench):
     env["PARAMS"] = str(cfg_path)
 
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOGS_DIR / "{}.log".format(tag)
+    suffix = "" if attempt == 0 else ".retry{}".format(attempt)
+    log_path = LOGS_DIR / "{}{}.log".format(tag, suffix)
 
     print("\n{}".format("=" * 78))
     print("[{}] param={} value={} overrides={}".format(
@@ -101,9 +156,12 @@ def run_one(item, base_manifest, bench):
     print("  log:    {}".format(log_path))
     print("=" * 78)
 
+    wait_for_free_gpu(gpu_wait_timeout)
+
     started_at = datetime.datetime.utcnow().isoformat() + "Z"
     start = time.time()
     status = "failed"
+    interrupted = False
     try:
         with open(log_path, "w") as logf:
             proc = subprocess.Popen(
@@ -115,18 +173,25 @@ def run_one(item, base_manifest, bench):
                 universal_newlines=True,
                 bufsize=1,
             )
-            for line in proc.stdout:
-                sys.stdout.write(line)
-                logf.write(line)
-            proc.wait()
+            try:
+                for line in proc.stdout:
+                    sys.stdout.write(line)
+                    logf.write(line)
+                proc.wait()
+            except KeyboardInterrupt:
+                interrupted = True
+                proc.terminate()
+                raise
         if proc.returncode == 0:
             status = "success"
     except KeyboardInterrupt:
-        raise
+        interrupted = True
     except Exception as exc:  # noqa: BLE001
         print("[{}] ERROR launching run.sh: {}".format(tag, exc))
 
     elapsed = time.time() - start
+    if interrupted:
+        status = "interrupted"
 
     if status == "success":
         try:
@@ -152,6 +217,8 @@ def run_one(item, base_manifest, bench):
     )
     append_manifest(record)
     print("[{}] -> {} ({:.1f}s)".format(tag, status.upper(), elapsed))
+    if interrupted:
+        raise KeyboardInterrupt
     return status
 
 
@@ -173,6 +240,16 @@ def main():
     ap.add_argument(
         "--stop-on-error", action="store_true",
         help="abort the sweep on the first failed config (default: continue)",
+    )
+    ap.add_argument(
+        "--max-retries", type=int, default=1,
+        help="retry a failed config this many times (fresh deploy+bench) "
+        "before recording it as a final failure (default: 1)",
+    )
+    ap.add_argument(
+        "--gpu-wait-timeout", type=int, default=180,
+        help="seconds to wait for a foreign workload to free the shared GPU "
+        "before deploying anyway (default: 180)",
     )
     args = ap.parse_args()
 
@@ -198,12 +275,27 @@ def main():
 
     base_manifest = load_base_manifest()
     results = {"success": [], "failed": []}
-    for item in plan:
-        status = run_one(item, base_manifest, args.bench)
-        results[status if status in results else "failed"].append(item["tag"])
-        if status != "success" and args.stop_on_error:
-            print("\nStopping sweep on first failure (--stop-on-error).")
-            break
+    try:
+        for item in plan:
+            status = "failed"
+            for attempt in range(args.max_retries + 1):
+                if attempt > 0:
+                    print("[{}] retrying (attempt {}/{})".format(
+                        item["tag"], attempt + 1, args.max_retries + 1))
+                status = run_one(
+                    item, base_manifest, args.bench, args.gpu_wait_timeout,
+                    attempt=attempt,
+                )
+                if status == "success":
+                    break
+            results[status if status in results else "failed"].append(item["tag"])
+            if status != "success" and args.stop_on_error:
+                print("\nStopping sweep on first failure (--stop-on-error).")
+                break
+    except KeyboardInterrupt:
+        print("\nInterrupted. Progress is saved in the manifest; rerun with "
+              "--resume to continue.")
+        return
 
     print("\n{}".format("=" * 78))
     print("Sweep done: {} succeeded, {} failed".format(

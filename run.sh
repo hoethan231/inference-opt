@@ -8,6 +8,7 @@
 #   ./run.sh pull  [tag]         copy result files off the PVC to ./results/
 #   ./run.sh status              show server + benchmark Jobs
 #   ./run.sh clean               delete this repo's benchmark Jobs
+#   ./run.sh clean-results [tag] delete result files off the PVC (pull first!)
 #
 # The whole tuning loop is:
 #   1. edit config/vllm-params.yaml
@@ -21,6 +22,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS=vllm-inf
 DEPLOY="$HERE/deployments/vllm.yaml"
+RESULTS_PVC_YAML="$HERE/deployments/results-pvc.yaml"
+RESULTS_PVC="vllm-sweep-results-pvc"   # this repo's own volume; see deployments/results-pvc.yaml
 PARAMS="${PARAMS:-$HERE/config/vllm-params.yaml}"
 SCEN_DIR="$HERE/scenarios"
 JOBS="$HERE/jobs"
@@ -70,6 +73,8 @@ free_gpu() {
 cmd_deploy() {
   ensure_secret
   apply_config
+  log "ensuring our own results PVC exists ($RESULTS_PVC)"
+  kubectl apply -f "$RESULTS_PVC_YAML" >/dev/null
   free_gpu
   log "applying Deployment + Service"
   kubectl apply -f "$DEPLOY" >/dev/null
@@ -139,7 +144,7 @@ spec:
       command: ["sleep","3600"]
       volumeMounts: [ { name: results, mountPath: /results, readOnly: true } ]
   volumes:
-    - { name: results, persistentVolumeClaim: { claimName: guidellm-results-pvc } }
+    - { name: results, persistentVolumeClaim: { claimName: ${RESULTS_PVC} } }
 YAML
   kubectl wait --for=condition=Ready pod/bench-reader -n "$NS" --timeout=120s >/dev/null
   local f
@@ -149,6 +154,36 @@ YAML
   done
   kubectl delete pod bench-reader -n "$NS" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   log "done -> $RESULTS_DIR"
+}
+
+# Delete result files off the results PVC using an ephemeral writer pod.
+# ALWAYS pull first — this is permanent. Only touches this repo's own PVC
+# ($RESULTS_PVC), never the shared guidellm-results-pvc other tools use.
+cmd_clean_results() {
+  local glob="vllm-*"
+  [ -n "${1:-}" ] && glob="vllm-*${1}*"
+  warn "deleting '${glob}' from PVC '${RESULTS_PVC}' -- make sure you've run './run.sh pull' first!"
+  read -r -p "Type 'yes' to continue: " confirm
+  [ "$confirm" = "yes" ] || die "aborted"
+  kubectl delete pod bench-cleaner -n "$NS" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+  cat <<YAML | kubectl apply -f - >/dev/null
+apiVersion: v1
+kind: Pod
+metadata: { name: bench-cleaner, namespace: ${NS}, labels: { app: bench-cleaner } }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: cleaner
+      image: busybox:1.36
+      command: ["sleep","300"]
+      volumeMounts: [ { name: results, mountPath: /results } ]
+  volumes:
+    - { name: results, persistentVolumeClaim: { claimName: ${RESULTS_PVC} } }
+YAML
+  kubectl wait --for=condition=Ready pod/bench-cleaner -n "$NS" --timeout=120s >/dev/null
+  kubectl exec bench-cleaner -n "$NS" -- sh -c "rm -fv /results/${glob}"
+  kubectl delete pod bench-cleaner -n "$NS" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  log "done"
 }
 
 cmd_status() {
@@ -174,12 +209,13 @@ usage() {
 main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
-    deploy) cmd_deploy ;;
-    bench)  cmd_bench "$@" ;;
-    all)    cmd_all "$@" ;;
-    pull)   cmd_pull "$@" ;;
-    status) cmd_status ;;
-    clean)  cmd_clean ;;
+    deploy)        cmd_deploy ;;
+    bench)         cmd_bench "$@" ;;
+    all)           cmd_all "$@" ;;
+    pull)          cmd_pull "$@" ;;
+    status)        cmd_status ;;
+    clean)         cmd_clean ;;
+    clean-results) cmd_clean_results "$@" ;;
     help|-h|--help) usage ;;
     *) usage; die "unknown command: $cmd" ;;
   esac

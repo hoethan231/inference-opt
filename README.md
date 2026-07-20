@@ -32,7 +32,7 @@ makes reality match them. The objects we use:
 |---|---|---|
 | **ConfigMap** | a bag of key/value settings injected into a pod as env vars | `vllm-params` (your knobs), `coding-agent-scenarios` (workloads) |
 | **Secret** | like a ConfigMap but for sensitive values | `hf-token-secret` (your HF token) |
-| **PVC** (PersistentVolumeClaim) | a network disk that outlives pods | `nemotron-model-cache` (weights), `guidellm-results-pvc` (results) |
+| **PVC** (PersistentVolumeClaim) | a network disk that outlives pods | `nemotron-model-cache` (weights), `vllm-sweep-results-pvc` (results, this repo's own) |
 | **Deployment** | keeps N copies of a pod running; restarts them on change | `vllm-server` (the vLLM engine) |
 | **Service** | a stable DNS name/IP in front of pods | `vllm-svc` |
 | **Job** | a pod that runs once to completion | the GuideLLM benchmark runs |
@@ -122,7 +122,14 @@ Pass your own tag to line runs up with a config: `./run.sh bench both ms128-pf20
 - Default StorageClass `nutanix-volume` (ReadWriteOnce).
 - `nemotron-model-cache` PVC with the NVFP4 weights already downloaded — the
   server mounts it, so there is **no download step** and startup is fast.
-- `guidellm-results-pvc` for results; `hf-token-secret` for the token.
+- `vllm-sweep-results-pvc` (20Gi, created automatically by `./run.sh deploy`
+  from `deployments/results-pvc.yaml`) for results — dedicated to this repo's
+  own `vllm-rate-*`/`vllm-users-*` jobs so it can't fill up from, or get
+  cleared alongside, other benchmarking work on the shared cluster. If it
+  ever does fill up, `./run.sh pull` then `./run.sh clean-results` clears it
+  safely; **never** point these jobs back at the old shared
+  `guidellm-results-pvc`.
+- `hf-token-secret` for the token.
 
 ## Grid-searching hyperparameters (`sweep/`)
 
@@ -190,9 +197,40 @@ Columns include the tag/param/value being swept, the full effective config
 (`cfg_*`), request outcome counts + `error_rate`, and mean/p50/p90/p99 for
 latency (`request_latency_s`, `ttft_ms`, `tpot_ms`, `itl_ms`) and throughput
 (`requests_per_second`, `output_tokens_per_second`, `tokens_per_second`,
-`prompt_tokens_per_second`). Load the CSV into a spreadsheet or
-`pandas.read_csv(...)` to plot/pivot, e.g. per-param sensitivity or a
-latency-vs-throughput frontier.
+`prompt_tokens_per_second`).
+
+### Plotting + picking a final config
+
+```bash
+pip install matplotlib pandas pyyaml   # once
+python3 sweep/plot_results.py
+```
+
+Reads `results/aggregated.csv` and writes PNGs to `results/plots/`:
+
+- `00_overview_rate.png` / `00_overview_concurrent.png` — every tag/run
+  compared head-to-head on TTFT p90, latency p90, throughput, error rate.
+- `01_latency_throughput_frontier.png` — latency-vs-throughput tradeoff
+  curve for every config, annotated by concurrency level.
+- `param_<name>.png` — one per swept parameter: bar chart at the rate test
+  + line chart of how it scales across concurrency.
+- `param_rankings.csv` — the leaderboard table printed to stdout.
+
+It also ranks each parameter's tested values (excluding any whose error rate
+is too high to trust — see the script's `ERROR_RATE_THRESHOLD`, since a
+config that errors out most requests looks artificially *fast* on the
+survivors) and writes the best independently-tested value per parameter to
+`config/generated/vllm-params.recommended.yaml`, ready for a confirmation
+rerun:
+
+```bash
+PARAMS=config/generated/vllm-params.recommended.yaml ./run.sh all both final-rerun
+```
+
+Because the sweep is OFAT, this combines winners found independently, not a
+jointly-optimized combo — treat the rerun as a confirmation step. The
+script is split into `# %%` cells, so it also opens as a notebook in
+Cursor/VS Code without installing Jupyter.
 
 ## SGLang (later)
 
