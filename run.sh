@@ -102,25 +102,31 @@ run_one() {
   kubectl logs -f job/"$name" -n "$NS" 2>/dev/null || true
   if kubectl wait --for=condition=complete job/"$name" -n "$NS" --timeout=5s >/dev/null 2>&1; then
     log "  $test -> COMPLETE  (results file: ${name}.json)"
+    return 0
   elif kubectl get job "$name" -n "$NS" -o jsonpath='{.status.failed}' 2>/dev/null | grep -q 1; then
     warn "  $test -> FAILED. Inspect: kubectl logs job/$name -n $NS"
+    return 1
   else
     warn "  $test -> still running/unknown. Check: kubectl get job $name -n $NS"
+    return 1
   fi
 }
 
 cmd_bench() {
-  local test="${1:-both}" tag
+  local test="${1:-both}" tag rc=0
   tag="$(sanitize "${2:-${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}}")"
   apply_config   # make sure scenarios exist / are current
   log "benchmark tag = $tag"
   case "$test" in
-    rate)       run_one rate "$tag" ;;
-    concurrent) run_one concurrent "$tag" ;;
-    both)       run_one rate "$tag"; run_one concurrent "$tag" ;;
+    rate)       run_one rate "$tag" || rc=1 ;;
+    concurrent) run_one concurrent "$tag" || rc=1 ;;
+    both)       run_one rate "$tag" || rc=1; run_one concurrent "$tag" || rc=1 ;;
     *) die "unknown test '$test' (expected rate|concurrent|both)" ;;
   esac
   log "pull results with: ./run.sh pull $tag"
+  # Propagate any benchmark Job failure as a non-zero exit — callers like
+  # sweep/run_sweep.py rely on this to record accurate success/failure status.
+  return $rc
 }
 
 cmd_all() { cmd_deploy; cmd_bench "${1:-both}" "${2:-}"; }
@@ -142,7 +148,7 @@ spec:
     - name: reader
       image: busybox:1.36
       command: ["sleep","3600"]
-      volumeMounts: [ { name: results, mountPath: /results, readOnly: true } ]
+      volumeMounts: [ { name: results, mountPath: /results/outputs, readOnly: true } ]
   volumes:
     - { name: results, persistentVolumeClaim: { claimName: ${RESULTS_PVC} } }
 YAML

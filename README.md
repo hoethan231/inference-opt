@@ -180,9 +180,52 @@ python3 sweep/run_sweep.py --stop-on-error      # abort on first failed config i
 
 Each config: renders `config/generated/vllm-params.<tag>.yaml` (baseline +
 one override) → `PARAMS=<that file> ./run.sh all <bench> <tag>` (deploy +
-wait Ready + benchmark) → `./run.sh pull <tag>`. Every attempt — success or
-failure — gets one line in `sweep/manifest.jsonl` and a full log in
-`sweep/logs/<tag>.log`, so the sweep can be safely killed and resumed.
+wait Ready + benchmark) → `./run.sh pull <tag>` (always, even on failure, so
+partial results aren't lost). Every attempt — success or failure — gets one
+line in `sweep/manifest.jsonl` and a full log in `sweep/logs/<tag>.log`, so
+the sweep can be safely killed and resumed. `run.sh` propagates a real
+failing exit code when a benchmark Job fails on the cluster, so
+`--resume` only skips tags that are genuinely done.
+
+### Rerunning failed configs
+
+`--resume` trusts `sweep/manifest.jsonl`, which only reflects reality for
+runs made after the exit-code fix above. If you have older entries (or just
+want to double check), audit the manifest against what's actually in
+`results/` first:
+
+```bash
+python3 sweep/check_results.py                # report only: which tags are
+                                                # missing/empty result files
+python3 sweep/check_results.py --fix-manifest  # also append corrected
+                                                # "failed" entries for any
+                                                # stale "success" so...
+python3 sweep/run_sweep.py --resume            # ...this only reruns those
+```
+
+`--resume` builds the full OFAT plan and drops any tag whose *last* manifest
+entry is `"success"` — everything else (failed, interrupted, or never
+attempted) gets rerun, deploy + both benchmarks, from scratch.
+
+### Running a custom / one-off ConfigMap
+
+To run a single config you authored yourself (hand-edited, or one of the
+generated ones like `config/generated/vllm-params.recommended.yaml`)
+through the same deploy → bench → pull → manifest pipeline as the sweep,
+without touching the OFAT grid at all:
+
+```bash
+python3 sweep/run_sweep.py --custom-config config/generated/vllm-params.recommended.yaml --tag final-rerun
+# or any ConfigMap yaml you wrote by hand, anywhere:
+python3 sweep/run_sweep.py --custom-config /path/to/my-config.yaml --tag my-experiment
+```
+
+This records one entry in `sweep/manifest.jsonl` (`param: "custom"`) and one
+log in `sweep/logs/<tag>.log`, just like a normal sweep point, so it shows
+up alongside everything else if you rerun `sweep/aggregate.py`. `--only` and
+`--resume` are ignored in this mode (there's no grid to filter). If you
+don't care about manifest/log tracking, the lighter-weight equivalent is
+just `PARAMS=/path/to/config.yaml ./run.sh all both <tag>` directly.
 
 ### Aggregating results
 

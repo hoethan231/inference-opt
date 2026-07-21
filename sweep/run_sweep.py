@@ -140,7 +140,11 @@ def wait_for_free_gpu(timeout_s):
 
 def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
     tag = item["tag"]
-    cfg_path = generate_configmap(base_manifest, item["overrides"], tag)
+    custom_path = item.get("custom_config_path")
+    if custom_path:
+        cfg_path = Path(custom_path)
+    else:
+        cfg_path = generate_configmap(base_manifest, item["overrides"], tag)
 
     env = os.environ.copy()
     env["PARAMS"] = str(cfg_path)
@@ -193,7 +197,10 @@ def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
     if interrupted:
         status = "interrupted"
 
-    if status == "success":
+    # Pull regardless of status: run.sh now correctly reports partial
+    # failures (e.g. rate passed, concurrent failed) as non-"success", but
+    # any results file that *did* get written is still worth keeping.
+    if not interrupted:
         try:
             subprocess.run(
                 [str(RUN_SH), "pull", tag], cwd=str(REPO), env=env, check=True
@@ -215,6 +222,8 @@ def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
         finished_at=finished_at,
         log=str(log_path),
     )
+    if custom_path:
+        record["custom_config_path"] = str(cfg_path)
     append_manifest(record)
     print("[{}] -> {} ({:.1f}s)".format(tag, status.upper(), elapsed))
     if interrupted:
@@ -251,17 +260,50 @@ def main():
         help="seconds to wait for a foreign workload to free the shared GPU "
         "before deploying anyway (default: 180)",
     )
+    ap.add_argument(
+        "--custom-config", default=None, metavar="PATH",
+        help="run a single ad hoc ConfigMap YAML you authored yourself "
+        "(e.g. config/generated/vllm-params.recommended.yaml, or your own "
+        "file anywhere) through the same deploy->bench->pull->manifest "
+        "pipeline as the OFAT grid, skipping the grid entirely. Requires "
+        "--tag; ignores --only/--resume/--max-retries' retry-on-deploy-"
+        "failure logic still applies.",
+    )
+    ap.add_argument(
+        "--tag", default=None,
+        help="tag to record this run under in the manifest/logs (required "
+        "with --custom-config)",
+    )
     args = ap.parse_args()
 
-    plan = build_plan()
-    if args.only:
-        plan = [p for p in plan if args.only in p["tag"]]
-        if not plan:
-            sys.exit("no configs match --only '{}'".format(args.only))
+    if args.custom_config:
+        custom_path = Path(args.custom_config).resolve()
+        if not custom_path.exists():
+            sys.exit("--custom-config file not found: {}".format(custom_path))
+        if not args.tag:
+            sys.exit("--custom-config requires --tag <name>")
+        if args.only or args.resume:
+            print("note: --only/--resume are ignored with --custom-config")
+        plan = [
+            dict(
+                tag=sanitize(args.tag),
+                param="custom",
+                key=None,
+                value=custom_path.name,
+                overrides={},
+                custom_config_path=str(custom_path),
+            )
+        ]
+    else:
+        plan = build_plan()
+        if args.only:
+            plan = [p for p in plan if args.only in p["tag"]]
+            if not plan:
+                sys.exit("no configs match --only '{}'".format(args.only))
 
-    prior_status = load_manifest_status() if args.resume else {}
-    if args.resume:
-        plan = [p for p in plan if prior_status.get(p["tag"]) != "success"]
+        prior_status = load_manifest_status() if args.resume else {}
+        if args.resume:
+            plan = [p for p in plan if prior_status.get(p["tag"]) != "success"]
 
     print("Planned configs ({}):".format(len(plan)))
     for item in plan:
