@@ -71,9 +71,26 @@ ERROR_RATE_THRESHOLD = 0.05
 
 # What to actually look at in the overview/scaling charts.
 DISPLAY_METRICS = [
-    ("ttft_ms_p90", "TTFT p90 (ms)"),
-    ("request_latency_s_p90", "Request latency p90 (s)"),
+    ("ttft_ms_p50", "TTFT p50 (ms)"),
+    ("ttft_ms_p99", "TTFT p99 (ms)"),
+    ("request_latency_s_p50", "Request latency p50 (s)"),
+    ("request_latency_s_p99", "Request latency p99 (s)"),
     ("tokens_per_second_mean", "Throughput, tokens/s (mean)"),
+    ("error_rate", "Error rate"),
+]
+N_DISPLAY_METRICS = len(DISPLAY_METRICS)
+
+# Per-parameter detail plots use a 3-column x 4-row layout instead of a flat
+# 6-columns-wide row: within each test type (rate/concurrent), the p50
+# metrics go in one 3-wide row and the p99 metrics go in the row below it.
+P50_DETAIL_METRICS = [
+    ("ttft_ms_p50", "TTFT p50 (ms)"),
+    ("request_latency_s_p50", "Request latency p50 (s)"),
+    ("tokens_per_second_mean", "Throughput, tokens/s (mean)"),
+]
+P99_DETAIL_METRICS = [
+    ("ttft_ms_p99", "TTFT p99 (ms)"),
+    ("request_latency_s_p99", "Request latency p99 (s)"),
     ("error_rate", "Error rate"),
 ]
 
@@ -126,8 +143,8 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # %%
 def plot_overview_rate(rate_df, out_path):
-    tags = list(rate_df.sort_values("ttft_ms_p90")["tag"])
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+    tags = list(rate_df.sort_values("ttft_ms_p50")["tag"])
+    fig, axes = plt.subplots(2, 3, figsize=(18, 9))
     for ax, (col, label) in zip(axes.flat, DISPLAY_METRICS):
         vals = [rate_df.set_index("tag").loc[t, col] for t in tags]
         colors = [
@@ -146,7 +163,7 @@ def plot_overview_rate(rate_df, out_path):
 
 def plot_overview_concurrent(conc_df, out_path):
     tags = sorted(conc_df["tag"].unique())
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 9))
     for ax, (col, label) in zip(axes.flat, DISPLAY_METRICS):
         for i, tag in enumerate(tags):
             sub = conc_df[conc_df["tag"] == tag].sort_values("target")
@@ -184,28 +201,33 @@ plot_overview_concurrent(conc_df, OUT_DIR / "00_overview_concurrent.png")
 # %%
 def plot_frontier(conc_df, out_path):
     tags = sorted(conc_df["tag"].unique())
-    fig, ax = plt.subplots(figsize=(9, 7))
-    for i, tag in enumerate(tags):
-        sub = conc_df[conc_df["tag"] == tag].sort_values("target")
-        style = dict(
-            color="#d62728" if tag == "baseline" else CMAP(i % 10),
-            linewidth=2.5 if tag == "baseline" else 1.4,
-        )
-        ax.plot(sub["tokens_per_second_mean"], sub["ttft_ms_p90"], marker="o", label=tag, **style)
-        for _, row in sub.iterrows():
-            ax.annotate(
-                str(int(row["target"])),
-                (row["tokens_per_second_mean"], row["ttft_ms_p90"]),
-                fontsize=7,
-                textcoords="offset points",
-                xytext=(4, 4),
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    for ax, ttft_col, ttft_label in (
+        (axes[0], "ttft_ms_p50", "TTFT p50 (ms)"),
+        (axes[1], "ttft_ms_p99", "TTFT p99 (ms)"),
+    ):
+        for i, tag in enumerate(tags):
+            sub = conc_df[conc_df["tag"] == tag].sort_values("target")
+            style = dict(
+                color="#d62728" if tag == "baseline" else CMAP(i % 10),
+                linewidth=2.5 if tag == "baseline" else 1.4,
             )
-    ax.set_xlabel("Throughput, tokens/s (mean)")
-    ax.set_ylabel("TTFT p90 (ms)")
-    ax.set_title("Latency/throughput frontier (annotated with concurrency level)")
-    ax.grid(alpha=0.3)
-    ax.legend(fontsize=8, loc="upper right")
-    fig.tight_layout()
+            ax.plot(sub["tokens_per_second_mean"], sub[ttft_col], marker="o", label=tag, **style)
+            for _, row in sub.iterrows():
+                ax.annotate(
+                    str(int(row["target"])),
+                    (row["tokens_per_second_mean"], row[ttft_col]),
+                    fontsize=7,
+                    textcoords="offset points",
+                    xytext=(4, 4),
+                )
+        ax.set_xlabel("Throughput, tokens/s (mean)")
+        ax.set_ylabel(ttft_label)
+        ax.set_title(ttft_label)
+        ax.grid(alpha=0.3)
+    axes[0].legend(fontsize=8, loc="upper right")
+    fig.suptitle("Latency/throughput frontier (annotated with concurrency level)", fontsize=13)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
     print("wrote", out_path)
@@ -247,7 +269,7 @@ def plot_param_detail(df, sweep_item, out_dir):
         print("skip {}: no non-baseline data in results/ yet".format(param))
         return None
 
-    fig, axes = plt.subplots(2, 4, figsize=(19, 8))
+    fig, axes = plt.subplots(4, 3, figsize=(14, 16))
 
     def sort_key(v):
         try:
@@ -256,33 +278,48 @@ def plot_param_detail(df, sweep_item, out_dir):
             return (1, str(v))
 
     order = sorted(rate_rows["value_display"].unique(), key=sort_key)
-    for ax, (col, label) in zip(axes[0], DISPLAY_METRICS):
-        sub = rate_rows.set_index("value_display").reindex(order)
-        colors = ["#d62728" if v in rate_rows[rate_rows.is_baseline]["value_display"].values
-                  else CMAP(i % 10) for i, v in enumerate(order)]
-        ax.bar([str(v) for v in order], sub[col], color=colors)
-        ax.set_title(label)
-        ax.set_xlabel(param)
-        ax.tick_params(axis="x", rotation=30)
-        ax.grid(axis="y", alpha=0.3)
-    for ax, (col, label) in zip(axes[1], DISPLAY_METRICS):
-        for i, v in enumerate(order):
-            sub = conc_rows[conc_rows["value_display"] == v].sort_values("target")
-            if sub.empty:
-                continue
-            is_base = sub["is_baseline"].iloc[0]
-            style = dict(color="#d62728" if is_base else CMAP(i % 10),
-                         linewidth=2.5 if is_base else 1.6, marker="o")
-            ax.plot(sub["target"], sub[col], label=str(v), **style)
-        ax.set_xlabel("concurrent users")
-        ax.set_title(label)
-        ax.grid(alpha=0.3)
-    axes[1, 0].legend(title=param, fontsize=8, loc="best")
+
+    def plot_bar_row(axes_row, metrics):
+        for ax, (col, label) in zip(axes_row, metrics):
+            sub = rate_rows.set_index("value_display").reindex(order)
+            colors = ["#d62728" if v in rate_rows[rate_rows.is_baseline]["value_display"].values
+                      else CMAP(i % 10) for i, v in enumerate(order)]
+            ax.bar([str(v) for v in order], sub[col], color=colors)
+            ax.set_title(label)
+            ax.set_xlabel(param)
+            ax.tick_params(axis="x", rotation=30)
+            ax.grid(axis="y", alpha=0.3)
+
+    def plot_line_row(axes_row, metrics, show_legend=False):
+        for ax, (col, label) in zip(axes_row, metrics):
+            for i, v in enumerate(order):
+                sub = conc_rows[conc_rows["value_display"] == v].sort_values("target")
+                if sub.empty:
+                    continue
+                is_base = sub["is_baseline"].iloc[0]
+                style = dict(color="#d62728" if is_base else CMAP(i % 10),
+                             linewidth=2.5 if is_base else 1.6, marker="o")
+                ax.plot(sub["target"], sub[col], label=str(v), **style)
+            ax.set_xlabel("concurrent users")
+            ax.set_title(label)
+            ax.grid(alpha=0.3)
+        if show_legend:
+            axes_row[0].legend(title=param, fontsize=8, loc="best")
+
+    plot_bar_row(axes[0], P50_DETAIL_METRICS)
+    plot_bar_row(axes[1], P99_DETAIL_METRICS)
+    plot_line_row(axes[2], P50_DETAIL_METRICS, show_legend=True)
+    plot_line_row(axes[3], P99_DETAIL_METRICS)
+
     fig.suptitle(
-        "{} -- top row: rate test (20 req/s) | bottom row: concurrency scaling".format(param),
+        "{} -- rows 1-2: rate test (p50/p99) | rows 3-4: concurrency scaling (p50/p99)".format(param),
         fontsize=13,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout(rect=(0.05, 0, 1, 0.96))
+    top_pos = axes[0, 0].get_position()
+    bottom_pos = axes[2, 0].get_position()
+    fig.text(0.01, top_pos.y1, "rate test\n(20 req/s)", fontsize=10, fontweight="bold", va="top")
+    fig.text(0.01, bottom_pos.y1, "concurrency\nscaling", fontsize=10, fontweight="bold", va="top")
     out_path = out_dir / "param_{}.png".format(sanitize(param))
     fig.savefig(out_path, dpi=130)
     plt.close(fig)

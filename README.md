@@ -252,9 +252,11 @@ python3 sweep/plot_results.py
 Reads `results/aggregated.csv` and writes PNGs to `results/plots/`:
 
 - `00_overview_rate.png` / `00_overview_concurrent.png` — every tag/run
-  compared head-to-head on TTFT p90, latency p90, throughput, error rate.
+  compared head-to-head on TTFT p50/p99, latency p50/p99, throughput, error
+  rate.
 - `01_latency_throughput_frontier.png` — latency-vs-throughput tradeoff
-  curve for every config, annotated by concurrency level.
+  curve for every config (p50 and p99 side by side), annotated by
+  concurrency level.
 - `param_<name>.png` — one per swept parameter: bar chart at the rate test
   + line chart of how it scales across concurrency.
 - `param_rankings.csv` — the leaderboard table printed to stdout.
