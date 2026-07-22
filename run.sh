@@ -24,7 +24,7 @@ NS=vllm-inf
 DEPLOY="$HERE/deployments/vllm.yaml"
 RESULTS_PVC_YAML="$HERE/deployments/results-pvc.yaml"
 RESULTS_PVC="vllm-sweep-results-pvc"   # this repo's own volume; see deployments/results-pvc.yaml
-PARAMS="${PARAMS:-$HERE/config/vllm-params.yaml}"
+PARAMS="${PARAMS:-$HERE/config/custom/flashinfer_cutlass.yaml}"
 SCEN_DIR="$HERE/scenarios"
 JOBS="$HERE/jobs"
 RESULTS_DIR="${RESULTS_DIR:-$HERE/results}"
@@ -52,7 +52,7 @@ ensure_secret() {
 
 # Apply the params ConfigMap and (re)build the scenarios ConfigMap from files.
 apply_config() {
-  log "applying params ConfigMap (config/vllm-params.yaml)"
+  log "applying params ConfigMap ($PARAMS)"
   kubectl apply -f "$PARAMS" >/dev/null
   log "applying scenarios ConfigMap (from scenarios/*.json)"
   kubectl create configmap coding-agent-scenarios -n "$NS" \

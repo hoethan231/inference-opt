@@ -55,7 +55,7 @@ SWEEP = [
     dict(
         param="attention_backend",
         key="VLLM_ATTENTION_BACKEND",
-        values=["", "FLASHINFER", "TRITON_ATTN_VLLM_V1"],
+        values=["", "FLASHINFER", "TRITON_ATTN"],
         note="VLLM_ATTENTION_BACKEND env var; XFORMERS omitted (V0-only, "
         "not supported on the V1 engine used here)",
     ),

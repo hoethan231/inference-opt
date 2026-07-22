@@ -82,7 +82,7 @@ The knobs:
 | `GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization` | fraction of VRAM to use |
 | `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` | GPUs per replica (1 here) |
 | `BLOCK_SIZE` | `--block-size` | KV-cache block size (tokens/block) |
-| `VLLM_ATTENTION_BACKEND` | *(env var, read directly by vLLM)* | attention kernel backend; empty = auto-select |
+| `VLLM_ATTENTION_BACKEND` | `--attention-backend` *(turned into the flag by the entrypoint — vLLM ≥0.13 no longer reads this as an env var directly, see [vllm-project/vllm#26315](https://github.com/vllm-project/vllm/pull/26315))* | attention kernel backend; empty = auto-select |
 | `EXTRA_ARGS` | *(appended verbatim)* | any other flag, e.g. `--enforce-eager`, `--speculative-config '...'` |
 
 Anything not promoted to its own key goes in `EXTRA_ARGS` — the escape hatch for
@@ -163,7 +163,7 @@ Currently swept (edit `SWEEP` in `sweep/grid.py` to add/remove/change values):
 | `kv_cache_dtype` | auto, fp8, fp8_e4m3, fp8_e5m2 | `KV_CACHE_DTYPE` |
 | `max_num_seqs` | 32, 64, 128, 256 | `MAX_NUM_SEQS` |
 | `max_num_batched_tokens` | 512, 1024, 2048, 4096, 8192 | `MAX_NUM_BATCHED_TOKENS` |
-| `attention_backend` | auto, FLASHINFER, TRITON_ATTN_VLLM_V1 | `VLLM_ATTENTION_BACKEND` |
+| `attention_backend` | auto, FLASHINFER, TRITON_ATTN | `VLLM_ATTENTION_BACKEND` |
 | `gpu_memory_utilization` | 0.80, 0.85, 0.90, 0.95 | `GPU_MEMORY_UTILIZATION` |
 | `block_size` | 16, 32 | `BLOCK_SIZE` |
 | `max_model_len` | 8192, 32768, 131072, 262144 | `MAX_MODEL_LEN` |
@@ -276,6 +276,28 @@ Because the sweep is OFAT, this combines winners found independently, not a
 jointly-optimized combo — treat the rerun as a confirmation step. The
 script is split into `# %%` cells, so it also opens as a notebook in
 Cursor/VS Code without installing Jupyter.
+
+### Comparing two specific tags head-to-head
+
+`plot_results.py` renders every tag at once, which is noisy when you just
+want config A vs. config B (e.g. baseline vs. a candidate, or two finalists):
+
+```bash
+python3 sweep/compare_tags.py baseline max-num-seqs-256
+# fuzzy tag matching (unique substring) + custom legend labels also work:
+python3 sweep/compare_tags.py baseline final-rerun --label-a "current prod" --label-b "recommended"
+```
+
+Prints a delta table (tag_b vs. tag_a, % change) to stdout and writes to
+`results/plots/compare/`:
+
+- `<tag_a>_vs_<tag_b>_rate.png` — grouped bar chart at the rate test for
+  TTFT p50/p99, ITL p50/p99, end-to-end latency p50/p99, mean throughput,
+  and error rate.
+- `<tag_a>_vs_<tag_b>_concurrent.png` — same metrics as line charts scaling
+  across the 8/16/32/64 concurrency levels.
+- `<tag_a>_vs_<tag_b>_frontier.png` — latency-vs-throughput frontier for
+  just these two tags.
 
 ## SGLang (later)
 

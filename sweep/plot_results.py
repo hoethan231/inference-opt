@@ -73,8 +73,8 @@ ERROR_RATE_THRESHOLD = 0.05
 DISPLAY_METRICS = [
     ("ttft_ms_p50", "TTFT p50 (ms)"),
     ("ttft_ms_p99", "TTFT p99 (ms)"),
-    ("request_latency_s_p50", "Request latency p50 (s)"),
-    ("request_latency_s_p99", "Request latency p99 (s)"),
+    ("itl_ms_p50", "ITL p50 (ms)"),
+    ("itl_ms_p99", "ITL p99 (ms)"),
     ("tokens_per_second_mean", "Throughput, tokens/s (mean)"),
     ("error_rate", "Error rate"),
 ]
@@ -85,12 +85,12 @@ N_DISPLAY_METRICS = len(DISPLAY_METRICS)
 # metrics go in one 3-wide row and the p99 metrics go in the row below it.
 P50_DETAIL_METRICS = [
     ("ttft_ms_p50", "TTFT p50 (ms)"),
-    ("request_latency_s_p50", "Request latency p50 (s)"),
+    ("itl_ms_p50", "ITL p50 (ms)"),
     ("tokens_per_second_mean", "Throughput, tokens/s (mean)"),
 ]
 P99_DETAIL_METRICS = [
     ("ttft_ms_p99", "TTFT p99 (ms)"),
-    ("request_latency_s_p99", "Request latency p99 (s)"),
+    ("itl_ms_p99", "ITL p99 (ms)"),
     ("error_rate", "Error rate"),
 ]
 
