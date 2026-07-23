@@ -85,12 +85,12 @@ DISPLAY_METRICS = [
 P50_DETAIL_METRICS = [
     ("ttft_ms_p50", "TTFT p50 (ms)"),
     ("itl_ms_p50", "ITL p50 (ms)"),
-    ("tokens_per_second_mean", "Throughput, tokens/s (mean)"),
+    ("tokens_per_second_p50", "Throughput p50, tokens/s"),
 ]
 P99_DETAIL_METRICS = [
     ("ttft_ms_p99", "TTFT p99 (ms)"),
     ("itl_ms_p99", "ITL p99 (ms)"),
-    ("error_rate", "Error rate"),
+    ("tokens_per_second_p99", "Throughput p99, tokens/s"),
 ]
 
 CMAP = plt.get_cmap("tab10")
@@ -114,6 +114,15 @@ def prepare_frames(results_dir, manifest_path, suffix=None):
                      "(did you pull them? e.g. ./run.sh pull {})".format(
                          suffix, available or "(none)", suffix))
         print("Filtered to suffix '{}': {} tag(s).".format(suffix, df["tag"].nunique()))
+    else:
+        # Default view = the base sweep only. Suffixed re-runs (run_sweep.py
+        # --suffix <s>) are separate sweeps and only shown when explicitly
+        # requested via --suffix, so they don't bleed into the main plots.
+        suffixed = sorted(s for s in df["suffix"].unique() if s)
+        df = df[df["suffix"] == ""].copy()
+        if suffixed:
+            print("Excluding {} suffixed run group(s) from the base view: {} "
+                  "(use --suffix <s> to plot one).".format(len(suffixed), suffixed))
     rate_df = df[df["test_type"] == "rate"].copy()
     conc_df = df[df["test_type"] == "concurrent"].copy()
     print("  -> {} rate-test tag(s), {} concurrent-test tag(s).".format(
@@ -242,23 +251,39 @@ def plot_param_detail(sweep_item, rate_df, conc_df, out_dir, name_suffix=""):
 
     fig, axes = plt.subplots(4, 3, figsize=(14, 16))
 
+    meta = rate_rows.drop_duplicates("value_display").set_index("value_display")
+
+    def raw_of(v):
+        return meta.loc[v, "value"] if v in meta.index else v
+
+    def suffix_of(v):
+        return (meta.loc[v, "suffix"] if v in meta.index else "") or ""
+
     def sort_key(v):
         try:
-            return (0, float(v))
+            return (0, float(raw_of(v)), suffix_of(v))
         except (TypeError, ValueError):
-            return (1, str(v))
+            return (1, str(raw_of(v)), suffix_of(v))
 
     order = sorted(rate_rows["value_display"].unique(), key=sort_key)
     baseline_labels = set(rate_rows[rate_rows.is_baseline]["value_display"].values)
+
+    present_suffixes = {suffix_of(v) for v in order}
+    common_suffix = next(iter(present_suffixes)) if len(present_suffixes) == 1 else ""
+
+    def tick_label(v):
+        return v.split(" [")[0] if common_suffix else str(v)
+
+    xlabel = "{}_{}".format(param, common_suffix) if common_suffix else param
 
     def plot_bar_row(axes_row, metrics):
         for ax, (col, label) in zip(axes_row, metrics):
             sub = rate_rows.set_index("value_display").reindex(order)
             colors = ["#d62728" if v in baseline_labels else CMAP(i % 10)
                       for i, v in enumerate(order)]
-            ax.bar([str(v) for v in order], sub[col], color=colors)
+            ax.bar([tick_label(v) for v in order], sub[col], color=colors)
             ax.set_title(label)
-            ax.set_xlabel(param)
+            ax.set_xlabel(xlabel)
             ax.tick_params(axis="x", rotation=30)
             ax.grid(axis="y", alpha=0.3)
 
@@ -271,12 +296,12 @@ def plot_param_detail(sweep_item, rate_df, conc_df, out_dir, name_suffix=""):
                 is_base = sub["is_baseline"].iloc[0]
                 style = dict(color="#d62728" if is_base else CMAP(i % 10),
                              linewidth=2.5 if is_base else 1.6, marker="o")
-                ax.plot(sub["target"], sub[col], label=str(v), **style)
+                ax.plot(sub["target"], sub[col], label=tick_label(v), **style)
             ax.set_xlabel("concurrent users")
             ax.set_title(label)
             ax.grid(alpha=0.3)
         if show_legend:
-            axes_row[0].legend(title=param, fontsize=8, loc="best")
+            axes_row[0].legend(title=xlabel, fontsize=8, loc="best")
 
     plot_bar_row(axes[0], P50_DETAIL_METRICS)
     plot_bar_row(axes[1], P99_DETAIL_METRICS)
