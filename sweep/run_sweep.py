@@ -214,6 +214,7 @@ def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
         param=item["param"],
         key=item["key"],
         value=item["value"],
+        suffix=item.get("suffix", ""),
         overrides=item["overrides"],
         bench=bench,
         status=status,
@@ -245,6 +246,14 @@ def main():
     ap.add_argument(
         "--only", default=None,
         help="only run configs whose tag contains this substring",
+    )
+    ap.add_argument(
+        "--suffix", default=None,
+        help="append a custom suffix to every tag, e.g. --suffix rerun2 makes "
+        "'gpu-memory-utilization-0-80' -> 'gpu-memory-utilization-0-80-rerun2'. "
+        "Lets you re-run the sweep (or a subset) without overwriting earlier "
+        "results; plot_results.py/compare_tags.py can then plot them side by "
+        "side. (k8s names are RFC-1123, so the separator is '-', not '_'.)",
     )
     ap.add_argument(
         "--stop-on-error", action="store_true",
@@ -284,9 +293,13 @@ def main():
             sys.exit("--custom-config requires --tag <name>")
         if args.only or args.resume:
             print("note: --only/--resume are ignored with --custom-config")
+        base_tag = sanitize(args.tag)
+        tag = "{}-{}".format(base_tag, sanitize(args.suffix)) if args.suffix else base_tag
         plan = [
             dict(
-                tag=sanitize(args.tag),
+                tag=tag,
+                base_tag=base_tag,
+                suffix=args.suffix or "",
                 param="custom",
                 key=None,
                 value=custom_path.name,
@@ -295,7 +308,7 @@ def main():
             )
         ]
     else:
-        plan = build_plan()
+        plan = build_plan(args.suffix)
         if args.only:
             plan = [p for p in plan if args.only in p["tag"]]
             if not plan:
@@ -345,7 +358,7 @@ def main():
     if results["failed"]:
         print("Failed tags: {}".format(", ".join(results["failed"])))
     print("Manifest: {}".format(MANIFEST_PATH))
-    print("Next: python3 sweep/aggregate.py")
+    print("Next: python3 sweep/plot_results.py")
 
 
 if __name__ == "__main__":

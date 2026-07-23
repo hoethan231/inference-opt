@@ -133,17 +133,22 @@ Pass your own tag to line runs up with a config: `./run.sh bench both ms128-pf20
 
 ## Grid-searching hyperparameters (`sweep/`)
 
-`sweep/` automates the tune-loop above across many configs, one at a time,
-and rolls the results into a single CSV.
+`sweep/` automates the tune-loop above across many configs, one at a time.
 
 ```
-sweep/grid.py          # the sweep plan: baseline + one-factor-at-a-time (OFAT) values
+sweep/grid.py           # the sweep plan: baseline + one-factor-at-a-time (OFAT) values
 sweep/run_sweep.py      # driver: deploy -> bench -> pull, once per config, logged + resumable
-sweep/aggregate.py      # scans results/*.json + the manifest -> results/aggregated.csv
+sweep/load_results.py   # scans results/outputs/*.json + the manifest -> in-memory DataFrame
+sweep/plot_results.py   # reads the results directly + renders plots / recommends a config
+sweep/compare_tags.py   # head-to-head comparison of any two tags
 sweep/manifest.jsonl    # append-only record of every config run (tag, params, status, timing)
 sweep/logs/<tag>.log    # full run.sh output per config
 config/generated/       # per-config ConfigMap YAMLs rendered by run_sweep.py
 ```
+
+Result JSONs are read directly by the plotting/comparison tools (via
+`sweep/load_results.py`) — there is no intermediate `aggregated.csv` to keep
+in sync anymore.
 
 **Why OFAT, not full factorial:** sweeping N params with K values each is
 K^N configs. `sweep/grid.py` instead holds everything at the baseline
@@ -176,7 +181,15 @@ python3 sweep/run_sweep.py --bench rate         # faster: rate test only per con
 python3 sweep/run_sweep.py --resume             # rerun after an interruption, skips completed configs
 python3 sweep/run_sweep.py --only max-num-seqs  # rerun/debug just one parameter's variants
 python3 sweep/run_sweep.py --stop-on-error      # abort on first failed config instead of continuing
+python3 sweep/run_sweep.py --suffix rerun2      # append a suffix to every tag (see below)
 ```
+
+`--suffix <s>` appends a custom suffix to every tag, e.g.
+`gpu-memory-utilization-0-80` → `gpu-memory-utilization-0-80-rerun2`. Use it to
+re-run the whole sweep (or a subset via `--only`) without overwriting the
+earlier result files; `plot_results.py`/`compare_tags.py` then show the
+suffixed runs as distinct series labelled `<value> [rerun2]`. (k8s Job names
+are RFC-1123, so the separator is a dash even if you think of it as `_rerun2`.)
 
 Each config: renders `config/generated/vllm-params.<tag>.yaml` (baseline +
 one override) → `PARAMS=<that file> ./run.sh all <bench> <tag>` (deploy +
@@ -222,38 +235,24 @@ python3 sweep/run_sweep.py --custom-config /path/to/my-config.yaml --tag my-expe
 
 This records one entry in `sweep/manifest.jsonl` (`param: "custom"`) and one
 log in `sweep/logs/<tag>.log`, just like a normal sweep point, so it shows
-up alongside everything else if you rerun `sweep/aggregate.py`. `--only` and
+up alongside everything else in the plots. `--only` and
 `--resume` are ignored in this mode (there's no grid to filter). If you
 don't care about manifest/log tracking, the lighter-weight equivalent is
 just `PARAMS=/path/to/config.yaml ./run.sh all both <tag>` directly.
-
-### Aggregating results
-
-```bash
-python3 sweep/aggregate.py
-# -> results/aggregated.csv
-```
-
-One row per (config, test type, load level): `rate` results contribute 1 row,
-`concurrent` results contribute up to 4 (one per stream level: 8/16/32/64).
-Columns include the tag/param/value being swept, the full effective config
-(`cfg_*`), request outcome counts + `error_rate`, and mean/p50/p90/p99 for
-latency (`request_latency_s`, `ttft_ms`, `tpot_ms`, `itl_ms`) and throughput
-(`requests_per_second`, `output_tokens_per_second`, `tokens_per_second`,
-`prompt_tokens_per_second`).
 
 ### Plotting + picking a final config
 
 ```bash
 pip install matplotlib pandas pyyaml   # once
-python3 sweep/plot_results.py
+python3 sweep/plot_results.py                      # the whole sweep
+python3 sweep/plot_results.py --param max-num-seqs # just one parameter's sweep
 ```
 
-Reads `results/aggregated.csv` and writes PNGs to `results/plots/`:
+Reads the pulled result JSONs directly (via `sweep/load_results.py`) and
+writes PNGs to `results/plots/`. With no arguments it renders the whole sweep:
 
 - `00_overview_rate.png` / `00_overview_concurrent.png` — every tag/run
-  compared head-to-head on TTFT p50/p99, latency p50/p99, throughput, error
-  rate.
+  compared head-to-head on TTFT p50/p99, ITL p50/p99, throughput, error rate.
 - `01_latency_throughput_frontier.png` — latency-vs-throughput tradeoff
   curve for every config (p50 and p99 side by side), annotated by
   concurrency level.
@@ -261,21 +260,24 @@ Reads `results/aggregated.csv` and writes PNGs to `results/plots/`:
   + line chart of how it scales across concurrency.
 - `param_rankings.csv` — the leaderboard table printed to stdout.
 
-It also ranks each parameter's tested values (excluding any whose error rate
-is too high to trust — see the script's `ERROR_RATE_THRESHOLD`, since a
-config that errors out most requests looks artificially *fast* on the
+With `--param <name>` (accepts the param name, its sanitized form, or a unique
+substring) it renders and ranks just that one parameter's sweep — handy while
+iterating on a single knob. Custom-suffixed runs (`run_sweep.py --suffix`)
+appear as distinct series labelled `<value> [<suffix>]`.
+
+In full mode it also ranks each parameter's tested values (excluding any whose
+error rate is too high to trust — see the script's `ERROR_RATE_THRESHOLD`,
+since a config that errors out most requests looks artificially *fast* on the
 survivors) and writes the best independently-tested value per parameter to
-`config/generated/vllm-params.recommended.yaml`, ready for a confirmation
-rerun:
+`config/generated/vllm-params.recommended.yaml` (pass `--no-recommend` to
+skip), ready for a confirmation rerun:
 
 ```bash
-PARAMS=config/generated/vllm-params.recommended.yaml ./run.sh all both final-rerun
+python3 sweep/run_sweep.py --custom-config config/generated/vllm-params.recommended.yaml --tag final-rerun
 ```
 
 Because the sweep is OFAT, this combines winners found independently, not a
-jointly-optimized combo — treat the rerun as a confirmation step. The
-script is split into `# %%` cells, so it also opens as a notebook in
-Cursor/VS Code without installing Jupyter.
+jointly-optimized combo — treat the rerun as a confirmation step.
 
 ### Comparing two specific tags head-to-head
 

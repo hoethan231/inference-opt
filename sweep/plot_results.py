@@ -1,33 +1,35 @@
 #!/usr/bin/env python3
-# %% [markdown]
-# # Sweep results: plots + "best config" recommendation
-#
-# Reads `results/aggregated.csv` (produced by `sweep/aggregate.py`) and:
-#
-# 1. Renders comparison plots across tags/runs for the metrics that matter
-#    (TTFT, end-to-end latency, throughput, error rate) — an "overview"
-#    chart with every tag side by side, plus one detail chart per swept
-#    parameter (bar chart at the steady 20 req/s rate test, line chart
-#    showing how it scales across 8/16/32/64 concurrent users).
-# 2. Draws a latency-vs-throughput frontier so you can see the tradeoff
-#    curve for every config at once.
-# 3. Ranks each parameter's tested values with a composite score and prints
-#    a leaderboard, then combines the best independently-tested value per
-#    parameter into one "recommended" config for a final confirmation rerun.
-#
-# This file is plain Python split into `# %%` cells, so it runs top to
-# bottom as a script (`python3 sweep/plot_results.py`) *and* opens as a
-# notebook in Cursor/VS Code ("Run Cell" / "Run Below") without needing
-# Jupyter installed.
-#
-# IMPORTANT CAVEAT: this sweep is one-factor-at-a-time (OFAT), not a full
-# grid search — each parameter was varied alone against the baseline, so we
-# never measured combinations. The "recommended" config below is the best
-# *independent* value per parameter, which assumes the parameters don't
-# interact much. That's a reasonable starting guess, not a proven optimum —
-# treat the final rerun as a confirmation step, not a formality.
+"""
+plot_results.py - sweep result plots + "best config" recommendation.
 
-# %%
+Reads the pulled GuideLLM result JSONs directly (via load_results.py, which
+scans results/outputs/vllm-{rate,users}-<tag>.json + sweep/manifest.jsonl) --
+there is no intermediate aggregated.csv anymore.
+
+By default it renders the whole OFAT sweep:
+
+  1. Overview charts with every tag side by side (rate + concurrent).
+  2. A latency-vs-throughput frontier across all configs.
+  3. One detail chart per swept parameter (bar chart at the steady rate test,
+     line chart across 8/16/32/64 concurrent users).
+  4. A per-parameter leaderboard + a "recommended" config combining the best
+     independently-tested value per parameter.
+
+Or plot just one parameter's sweep with --param:
+
+    python3 sweep/plot_results.py                       # everything
+    python3 sweep/plot_results.py --param gpu_memory_utilization
+    python3 sweep/plot_results.py --param max-num-seqs  # sanitized name / substring ok
+
+Custom-suffixed runs (run_sweep.py --suffix <s>) show up as distinct series
+labelled "<value> [<suffix>]", so you can plot re-runs next to the originals.
+
+IMPORTANT CAVEAT: this sweep is one-factor-at-a-time (OFAT), not a full grid
+search -- the "recommended" config is the best *independent* value per
+parameter, a reasonable starting guess, not a proven joint optimum. Treat the
+final rerun as a confirmation step.
+"""
+import argparse
 import copy
 import sys
 from pathlib import Path
@@ -42,22 +44,22 @@ import yaml
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
-from grid import BASELINE, SWEEP, AUTO_LABEL, display_value, sanitize  # noqa: E402
+from grid import BASELINE, SWEEP, display_value, sanitize  # noqa: E402
+from load_results import load_results  # noqa: E402
 
-CSV_PATH = REPO / "results" / "aggregated.csv"
 OUT_DIR = REPO / "results" / "plots"
 BASE_PARAMS_FILE = REPO / "config" / "vllm-params.yaml"
 RECOMMENDED_PARAMS_FILE = REPO / "config" / "generated" / "vllm-params.recommended.yaml"
 
 # Rows with no manifest match (stray/duplicate runs); dropped from the
-# "compare tags" views so they don't skew things. See printed note below.
+# comparison views so they don't skew things.
 DROP_TAGS = {"20260716-203022"}
 
 # (column, "min" or "max") - direction of "better" for the composite score.
 # error_rate is deliberately NOT averaged in here: a config that drops/errors
 # most requests will look artificially *fast* on latency (only the lucky
-# survivors get measured), so error rate is treated as a hard gate instead
-# (see ERROR_RATE_THRESHOLD below), not one-quarter of a linear blend.
+# survivors get measured), so error rate is a hard gate instead (see
+# ERROR_RATE_THRESHOLD), not one-quarter of a linear blend.
 SCORING_METRICS = [
     ("ttft_ms_p90", "min"),
     ("request_latency_s_p90", "min"),
@@ -65,8 +67,7 @@ SCORING_METRICS = [
 ]
 
 # A config that errors out more than this fraction of requests is excluded
-# from "best value" ranking entirely, regardless of how fast its survivors
-# look -- see the printed warning when this triggers.
+# from "best value" ranking entirely, regardless of how fast its survivors look.
 ERROR_RATE_THRESHOLD = 0.05
 
 # What to actually look at in the overview/scaling charts.
@@ -78,11 +79,9 @@ DISPLAY_METRICS = [
     ("tokens_per_second_mean", "Throughput, tokens/s (mean)"),
     ("error_rate", "Error rate"),
 ]
-N_DISPLAY_METRICS = len(DISPLAY_METRICS)
 
-# Per-parameter detail plots use a 3-column x 4-row layout instead of a flat
-# 6-columns-wide row: within each test type (rate/concurrent), the p50
-# metrics go in one 3-wide row and the p99 metrics go in the row below it.
+# Per-parameter detail plots use a 3-column x 4-row layout: within each test
+# type (rate/concurrent), p50 metrics go in one 3-wide row and p99 below it.
 P50_DETAIL_METRICS = [
     ("ttft_ms_p50", "TTFT p50 (ms)"),
     ("itl_ms_p50", "ITL p50 (ms)"),
@@ -97,64 +96,40 @@ P99_DETAIL_METRICS = [
 CMAP = plt.get_cmap("tab10")
 
 
-# %% [markdown]
-# ## Load + clean
-
-
-# %%
-def load_data(csv_path=CSV_PATH):
-    df = pd.read_csv(csv_path)
+# ---------------------------------------------------------------------------
+# Load + clean
+# ---------------------------------------------------------------------------
+def prepare_frames(results_dir, manifest_path):
+    df = load_results(results_dir=results_dir, manifest_path=manifest_path)
     dropped = sorted(set(df["tag"]) & DROP_TAGS)
     if dropped:
-        print(
-            "Dropping {} stray/untagged run(s) from the comparison views: {}\n"
-            "(no matching sweep/manifest.jsonl entry -- looks like a "
-            "pre-'baseline'-tag leftover run, not part of the OFAT plan)".format(
-                len(dropped), dropped
-            )
-        )
+        print("Dropping {} stray/untagged run(s) with no manifest entry: {}".format(
+            len(dropped), dropped))
         df = df[~df["tag"].isin(DROP_TAGS)].copy()
-    df["value_display"] = df.apply(
-        lambda r: AUTO_LABEL if pd.isna(r["value"]) and r["tag"] == "baseline" else r["value"],
-        axis=1,
-    )
-    return df
+    rate_df = df[df["test_type"] == "rate"].copy()
+    conc_df = df[df["test_type"] == "concurrent"].copy()
+    print("  -> {} rate-test tag(s), {} concurrent-test tag(s).".format(
+        rate_df["tag"].nunique(), conc_df["tag"].nunique()))
+    return df, rate_df, conc_df
 
 
-df = load_data()
-rate_df = df[df["test_type"] == "rate"].copy()
-conc_df = df[df["test_type"] == "concurrent"].copy()
-print(
-    "Loaded {} rows: {} rate-test tags, {} concurrent-test tags.".format(
-        len(df), rate_df["tag"].nunique(), conc_df["tag"].nunique()
-    )
-)
-
-OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# %% [markdown]
-# ## Overview: every tag/run compared head-to-head
-#
-# `rate` = steady 20 req/s offered load (one row per tag). `concurrent` =
-# fixed 8/16/32/64 concurrent users (up to 4 rows per tag) -- shown as a
-# scaling curve instead of a bar since there's a level per point.
-
-
-# %%
+# ---------------------------------------------------------------------------
+# Overview: every tag/run compared head-to-head
+# ---------------------------------------------------------------------------
 def plot_overview_rate(rate_df, out_path):
+    if rate_df.empty:
+        print("skip overview_rate: no rate-test rows")
+        return
     tags = list(rate_df.sort_values("ttft_ms_p50")["tag"])
     fig, axes = plt.subplots(2, 3, figsize=(18, 9))
     for ax, (col, label) in zip(axes.flat, DISPLAY_METRICS):
         vals = [rate_df.set_index("tag").loc[t, col] for t in tags]
-        colors = [
-            "#d62728" if t == "baseline" else CMAP(i % 10) for i, t in enumerate(tags)
-        ]
+        colors = ["#d62728" if t == "baseline" else CMAP(i % 10) for i, t in enumerate(tags)]
         ax.barh(tags, vals, color=colors)
         ax.set_xlabel(label)
         ax.set_title(label)
         ax.grid(axis="x", alpha=0.3)
-    fig.suptitle("Rate test (20 req/s offered load) -- all tags compared", fontsize=13)
+    fig.suptitle("Rate test (steady offered load) -- all tags compared", fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
@@ -162,6 +137,9 @@ def plot_overview_rate(rate_df, out_path):
 
 
 def plot_overview_concurrent(conc_df, out_path):
+    if conc_df.empty:
+        print("skip overview_concurrent: no concurrent-test rows")
+        return
     tags = sorted(conc_df["tag"].unique())
     fig, axes = plt.subplots(2, 3, figsize=(18, 9))
     for ax, (col, label) in zip(axes.flat, DISPLAY_METRICS):
@@ -186,20 +164,13 @@ def plot_overview_concurrent(conc_df, out_path):
     print("wrote", out_path)
 
 
-plot_overview_rate(rate_df, OUT_DIR / "00_overview_rate.png")
-plot_overview_concurrent(conc_df, OUT_DIR / "00_overview_concurrent.png")
-
-
-# %% [markdown]
-# ## Latency vs. throughput frontier
-#
-# Every point is one (tag, concurrency-level) run. Down-and-right is better
-# (more throughput for less TTFT). Lines connect the same tag across
-# concurrency levels so you can see how each config scales.
-
-
-# %%
+# ---------------------------------------------------------------------------
+# Latency vs. throughput frontier
+# ---------------------------------------------------------------------------
 def plot_frontier(conc_df, out_path):
+    if conc_df.empty:
+        print("skip frontier: no concurrent-test rows")
+        return
     tags = sorted(conc_df["tag"].unique())
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
     for ax, ttft_col, ttft_label in (
@@ -217,9 +188,7 @@ def plot_frontier(conc_df, out_path):
                 ax.annotate(
                     str(int(row["target"])),
                     (row["tokens_per_second_mean"], row[ttft_col]),
-                    fontsize=7,
-                    textcoords="offset points",
-                    xytext=(4, 4),
+                    fontsize=7, textcoords="offset points", xytext=(4, 4),
                 )
         ax.set_xlabel("Throughput, tokens/s (mean)")
         ax.set_ylabel(ttft_label)
@@ -233,35 +202,29 @@ def plot_frontier(conc_df, out_path):
     print("wrote", out_path)
 
 
-plot_frontier(conc_df, OUT_DIR / "01_latency_throughput_frontier.png")
-
-
-# %% [markdown]
-# ## Per-parameter detail views
-#
-# For each swept parameter: a bar chart at the rate test (one bar per
-# tested value, baseline's own value included in red) and a line chart
-# showing how that same set of values scales across concurrency.
-
-
-# %%
+# ---------------------------------------------------------------------------
+# Per-parameter detail views
+# ---------------------------------------------------------------------------
 def param_rows(df, sweep_item):
-    """All rows for one swept parameter, plus a synthetic baseline point
-    (the 'baseline' tag's row, relabeled with this param's baseline value)
-    since baseline only appears once in the CSV but is the x=baseline_value
-    point for every parameter's comparison."""
+    """All rows for one swept parameter, plus synthetic baseline point(s)
+    (the 'baseline' tag rows, relabelled to sit at this param's baseline
+    value) since baseline is the x=baseline_value point for every parameter's
+    comparison. Custom-suffixed baseline runs stay distinct via value_display."""
     key = sweep_item["key"]
-    baseline_value = display_value(key, BASELINE[key])
+    baseline_display = display_value(key, BASELINE[key])
     rows = df[df["param"] == sweep_item["param"]].copy()
-    baseline_rows = df[df["tag"] == "baseline"].copy()
-    baseline_rows["value_display"] = baseline_value
-    baseline_rows["param"] = sweep_item["param"]
-    out = pd.concat([baseline_rows, rows], ignore_index=True)
-    out["is_baseline"] = out["value_display"] == baseline_value
+    rows["is_baseline"] = False
+    base = df[df["param"] == "baseline"].copy()
+    base["value"] = BASELINE[key]
+    base["value_display"] = base["suffix"].apply(
+        lambda s: "{} [{}]".format(baseline_display, s) if s else baseline_display
+    )
+    base["is_baseline"] = True
+    out = pd.concat([base, rows], ignore_index=True)
     return out.drop_duplicates(subset=["value_display", "test_type", "target"])
 
 
-def plot_param_detail(df, sweep_item, out_dir):
+def plot_param_detail(sweep_item, rate_df, conc_df, out_dir):
     param = sweep_item["param"]
     rate_rows = param_rows(rate_df, sweep_item)
     conc_rows = param_rows(conc_df, sweep_item)
@@ -278,12 +241,13 @@ def plot_param_detail(df, sweep_item, out_dir):
             return (1, str(v))
 
     order = sorted(rate_rows["value_display"].unique(), key=sort_key)
+    baseline_labels = set(rate_rows[rate_rows.is_baseline]["value_display"].values)
 
     def plot_bar_row(axes_row, metrics):
         for ax, (col, label) in zip(axes_row, metrics):
             sub = rate_rows.set_index("value_display").reindex(order)
-            colors = ["#d62728" if v in rate_rows[rate_rows.is_baseline]["value_display"].values
-                      else CMAP(i % 10) for i, v in enumerate(order)]
+            colors = ["#d62728" if v in baseline_labels else CMAP(i % 10)
+                      for i, v in enumerate(order)]
             ax.bar([str(v) for v in order], sub[col], color=colors)
             ax.set_title(label)
             ax.set_xlabel(param)
@@ -318,7 +282,7 @@ def plot_param_detail(df, sweep_item, out_dir):
     fig.tight_layout(rect=(0.05, 0, 1, 0.96))
     top_pos = axes[0, 0].get_position()
     bottom_pos = axes[2, 0].get_position()
-    fig.text(0.01, top_pos.y1, "rate test\n(20 req/s)", fontsize=10, fontweight="bold", va="top")
+    fig.text(0.01, top_pos.y1, "rate test", fontsize=10, fontweight="bold", va="top")
     fig.text(0.01, bottom_pos.y1, "concurrency\nscaling", fontsize=10, fontweight="bold", va="top")
     out_path = out_dir / "param_{}.png".format(sanitize(param))
     fig.savefig(out_path, dpi=130)
@@ -327,18 +291,9 @@ def plot_param_detail(df, sweep_item, out_dir):
     return rate_rows
 
 
-param_rate_data = {}
-for sweep_item in SWEEP:
-    result = plot_param_detail(df, sweep_item, OUT_DIR)
-    if result is not None:
-        param_rate_data[sweep_item["param"]] = result
-
-
-# %% [markdown]
-# ## Rank each parameter's tested values + recommend a final config
-
-
-# %%
+# ---------------------------------------------------------------------------
+# Rank each parameter's tested values
+# ---------------------------------------------------------------------------
 def score_rows(rows, error_threshold=ERROR_RATE_THRESHOLD):
     scored = rows.copy()
     scored["reliable"] = scored["error_rate"] <= error_threshold
@@ -353,40 +308,22 @@ def score_rows(rows, error_threshold=ERROR_RATE_THRESHOLD):
                 norm = 1 - norm
         scored[col + "__score"] = norm
     scored["composite_score"] = scored[[c + "__score" for c, _ in SCORING_METRICS]].mean(axis=1)
-    # unreliable rows are sorted last no matter how good their raw numbers
-    # look (their latency stats are survivor-biased, not comparable)
+    # unreliable rows sort last no matter how good their raw numbers look
     scored.loc[~scored["reliable"], "composite_score"] = -1.0
     return scored.sort_values("composite_score", ascending=False)
 
 
-leaderboard_frames = []
-recommended_overrides = {}
-untested_params = []
-
-print("\n" + "=" * 78)
-print("PER-PARAMETER LEADERBOARD (rate test, 20 req/s offered load)")
-print("=" * 78)
-for sweep_item in SWEEP:
+def rank_param(sweep_item, rate_rows):
+    """Prints the leaderboard for one param and returns (leaderboard_frame,
+    recommended_raw_value_or_None)."""
     param = sweep_item["param"]
     key = sweep_item["key"]
-    rows = param_rate_data.get(param)
-    if rows is None or len(rows) <= 1:
-        untested_params.append(sweep_item)
-        print("\n{}: NO USABLE DATA (baseline only) -- keeping baseline value".format(param))
-        continue
-    ranked = score_rows(rows)
-    ranked = ranked.assign(param=param)
-    leaderboard_frames.append(
-        ranked[["param", "value_display", "is_baseline", "reliable", "ttft_ms_p90",
-                "request_latency_s_p90", "tokens_per_second_mean", "error_rate",
-                "composite_score"]]
-    )
-    tested_values = set(rows["value_display"])
-    all_values = {display_value(key, v) for v in sweep_item["values"]} | {
-        display_value(key, BASELINE[key])
-    }
-    missing = sorted(all_values - tested_values)
-    print("\n{} (higher composite_score = better; error_rate > {:.0%} is excluded, see 'reliable'):".format(
+    ranked = score_rows(rate_rows).assign(param=param)
+    frame = ranked[["param", "value_display", "is_baseline", "reliable", "ttft_ms_p90",
+                    "request_latency_s_p90", "tokens_per_second_mean", "error_rate",
+                    "composite_score"]]
+
+    print("\n{} (higher composite_score = better; error_rate > {:.0%} excluded, see 'reliable'):".format(
         param, ERROR_RATE_THRESHOLD))
     print(
         ranked[["value_display", "reliable", "ttft_ms_p90", "request_latency_s_p90",
@@ -394,60 +331,33 @@ for sweep_item in SWEEP:
         .rename(columns={"value_display": "value"})
         .to_string(index=False)
     )
-    if missing:
-        print("  (not yet measured: {} -- results/*.json missing/corrupt for these)".format(missing))
-    base_err = ranked.loc[ranked["is_baseline"], "error_rate"].iloc[0]
-    if base_err > ERROR_RATE_THRESHOLD:
-        print("  !! baseline ({}) has a {:.0%} error rate at this rate test -- its 'fast' "
-              "latency numbers are survivor-biased (only the requests that didn't "
-              "error/timeout get measured). Treat baseline's own latency stats here "
-              "with suspicion.".format(display_value(key, BASELINE[key]), base_err))
 
+    base_mask = ranked["is_baseline"]
+    if base_mask.any():
+        base_err = ranked.loc[base_mask, "error_rate"].iloc[0]
+        if base_err is not None and base_err > ERROR_RATE_THRESHOLD:
+            print("  !! baseline has a {:.0%} error rate here -- its 'fast' latency numbers "
+                  "are survivor-biased; treat them with suspicion.".format(base_err))
+
+    recommended = None
     if not ranked["reliable"].any():
-        print("  -> NO reliable value found (every tested value exceeds the error-rate "
-              "threshold) -- keeping baseline, but investigate this param/test manually "
-              "before trusting any of these numbers.")
+        print("  -> NO reliable value found (every value exceeds the error-rate threshold) "
+              "-- keeping baseline; investigate this param manually.")
     else:
         best = ranked[ranked["reliable"]].iloc[0]
-        best_display = best["value_display"]
         if bool(best["is_baseline"]):
-            print("  -> best reliable value = baseline ({}); no change recommended.".format(best_display))
+            print("  -> best reliable value = baseline ({}); no change recommended.".format(
+                display_value(key, BASELINE[key])))
         else:
-            # map the display value back to the raw override value for this key
-            raw_value = next(
-                v for v in sweep_item["values"] if display_value(key, v) == best_display
-            )
-            recommended_overrides[key] = raw_value
-            print("  -> recommend {} = {} (was {}, error_rate {:.2%} -> {:.2%})".format(
-                key, best_display, display_value(key, BASELINE[key]),
-                ranked.loc[ranked["is_baseline"], "error_rate"].iloc[0], best["error_rate"]))
-
-leaderboard = pd.concat(leaderboard_frames, ignore_index=True) if leaderboard_frames else pd.DataFrame()
-leaderboard_path = OUT_DIR / "param_rankings.csv"
-leaderboard.to_csv(leaderboard_path, index=False)
-print("\nwrote", leaderboard_path)
-
-if untested_params:
-    print(
-        "\n{} parameter(s) have no usable measurements in results/ (files missing or "
-        "failed to parse -- see sweep/manifest.jsonl vs. results/*.json): {}".format(
-            len(untested_params), [p["param"] for p in untested_params]
-        )
-    )
-    print("Re-run those before trusting a final config, e.g.:")
-    for p in untested_params:
-        print("  python3 sweep/run_sweep.py --only {} --resume".format(sanitize(p["param"])))
+            recommended = best["value"]  # raw override value
+            print("  -> recommend {} = {} (was {})".format(
+                key, display_value(key, recommended), display_value(key, BASELINE[key])))
+    return frame, recommended
 
 
-# %% [markdown]
-# ## Write the recommended config for a final rerun
-#
-# Starts from the real `config/vllm-params.yaml` (so model name / EXTRA_ARGS
-# etc. are preserved) and overrides only the parameters we have confident,
-# independently-tested winners for. Untested parameters are left at baseline.
-
-
-# %%
+# ---------------------------------------------------------------------------
+# Recommended config
+# ---------------------------------------------------------------------------
 def write_recommended_config(overrides, out_path):
     with open(BASE_PARAMS_FILE) as f:
         manifest = yaml.safe_load(f)
@@ -460,26 +370,124 @@ def write_recommended_config(overrides, out_path):
     return out_path
 
 
-write_recommended_config(recommended_overrides, RECOMMENDED_PARAMS_FILE)
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def resolve_param(requested):
+    """Map a user-supplied name (param, sanitized param, or substring) to a
+    SWEEP item."""
+    names = [s["param"] for s in SWEEP]
+    for s in SWEEP:
+        if requested in (s["param"], sanitize(s["param"])):
+            return s
+    matches = [s for s in SWEEP if requested in s["param"] or requested in sanitize(s["param"])]
+    if len(matches) == 1:
+        print("note: '{}' matched param '{}'".format(requested, matches[0]["param"]))
+        return matches[0]
+    if len(matches) > 1:
+        sys.exit("'{}' matches multiple params, be more specific: {}".format(
+            requested, [m["param"] for m in matches]))
+    sys.exit("param '{}' not found. Available: {}".format(requested, names))
 
-print("\n" + "=" * 78)
-print("RECOMMENDED CONFIG FOR A FINAL CONFIRMATION RERUN")
-print("=" * 78)
-print("(baseline value shown for keys left unchanged; OFAT sweep -> this is a")
-print(" best-guess combination, not a proven joint optimum -- verify with a rerun)")
-for sweep_item in SWEEP:
-    key = sweep_item["key"]
-    if key in recommended_overrides:
-        print("  {:<24} {} -> {}  [from {} data]".format(
-            key, display_value(key, BASELINE[key]),
-            display_value(key, recommended_overrides[key]), sweep_item["param"]))
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument(
+        "--param", default=None,
+        help="plot only this one parameter's sweep (param name, sanitized name, "
+        "or unique substring). Skips the overview/frontier/recommendation.")
+    ap.add_argument("--results-dir", default=str(REPO / "results" / "outputs"))
+    ap.add_argument("--manifest", default=str(HERE / "manifest.jsonl"))
+    ap.add_argument("--out-dir", default=str(OUT_DIR))
+    ap.add_argument(
+        "--no-recommend", action="store_true",
+        help="skip writing config/generated/vllm-params.recommended.yaml")
+    args = ap.parse_args()
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _, rate_df, conc_df = prepare_frames(args.results_dir, args.manifest)
+
+    # ---- single-parameter mode -------------------------------------------
+    if args.param:
+        sweep_item = resolve_param(args.param)
+        rate_rows = plot_param_detail(sweep_item, rate_df, conc_df, out_dir)
+        if rate_rows is None or len(rate_rows) <= 1:
+            print("\nNo usable non-baseline data for '{}' yet.".format(sweep_item["param"]))
+            return
+        print("\n" + "=" * 78)
+        print("LEADERBOARD -- {} (rate test)".format(sweep_item["param"]))
+        print("=" * 78)
+        rank_param(sweep_item, rate_rows)
+        print("\nPlot written to {}".format(out_dir))
+        return
+
+    # ---- full sweep mode --------------------------------------------------
+    plot_overview_rate(rate_df, out_dir / "00_overview_rate.png")
+    plot_overview_concurrent(conc_df, out_dir / "00_overview_concurrent.png")
+    plot_frontier(conc_df, out_dir / "01_latency_throughput_frontier.png")
+
+    param_rate_data = {}
+    for sweep_item in SWEEP:
+        result = plot_param_detail(sweep_item, rate_df, conc_df, out_dir)
+        if result is not None:
+            param_rate_data[sweep_item["param"]] = result
+
+    print("\n" + "=" * 78)
+    print("PER-PARAMETER LEADERBOARD (rate test)")
+    print("=" * 78)
+    leaderboard_frames = []
+    recommended_overrides = {}
+    untested = []
+    for sweep_item in SWEEP:
+        rows = param_rate_data.get(sweep_item["param"])
+        if rows is None or len(rows) <= 1:
+            untested.append(sweep_item)
+            print("\n{}: NO USABLE DATA (baseline only) -- keeping baseline value".format(
+                sweep_item["param"]))
+            continue
+        frame, recommended = rank_param(sweep_item, rows)
+        leaderboard_frames.append(frame)
+        if recommended is not None:
+            recommended_overrides[sweep_item["key"]] = recommended
+
+    leaderboard = pd.concat(leaderboard_frames, ignore_index=True) if leaderboard_frames else pd.DataFrame()
+    leaderboard_path = out_dir / "param_rankings.csv"
+    leaderboard.to_csv(leaderboard_path, index=False)
+    print("\nwrote", leaderboard_path)
+
+    if untested:
+        print("\n{} parameter(s) have no usable measurements yet: {}".format(
+            len(untested), [p["param"] for p in untested]))
+        for p in untested:
+            print("  python3 sweep/run_sweep.py --only {} --resume".format(sanitize(p["param"])))
+
+    if args.no_recommend:
+        print("\n(--no-recommend: skipped writing recommended config)")
     else:
-        print("  {:<24} {}  [unchanged -- {}]".format(
-            key, display_value(key, BASELINE[key]),
-            "no data yet" if sweep_item in untested_params else "baseline already best"))
-print("\nWrote {}".format(RECOMMENDED_PARAMS_FILE))
-print("To run it:")
-print("  PARAMS={} ./run.sh all both final-rerun".format(RECOMMENDED_PARAMS_FILE))
-print("  ./run.sh pull final-rerun && python3 sweep/aggregate.py && python3 sweep/plot_results.py")
+        write_recommended_config(recommended_overrides, RECOMMENDED_PARAMS_FILE)
+        print("\n" + "=" * 78)
+        print("RECOMMENDED CONFIG FOR A FINAL CONFIRMATION RERUN")
+        print("=" * 78)
+        print("(OFAT sweep -> best-guess combination, not a proven joint optimum)")
+        for sweep_item in SWEEP:
+            key = sweep_item["key"]
+            if key in recommended_overrides:
+                print("  {:<24} {} -> {}  [from {} data]".format(
+                    key, display_value(key, BASELINE[key]),
+                    display_value(key, recommended_overrides[key]), sweep_item["param"]))
+            else:
+                reason = "no data yet" if sweep_item in untested else "baseline already best"
+                print("  {:<24} {}  [unchanged -- {}]".format(
+                    key, display_value(key, BASELINE[key]), reason))
+        print("\nWrote {}".format(RECOMMENDED_PARAMS_FILE))
+        print("To run it:")
+        print("  python3 sweep/run_sweep.py --custom-config {} --tag final-rerun".format(
+            RECOMMENDED_PARAMS_FILE))
 
-print("\nPlots written to {}".format(OUT_DIR))
+    print("\nPlots written to {}".format(out_dir))
+
+
+if __name__ == "__main__":
+    main()

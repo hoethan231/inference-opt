@@ -94,10 +94,24 @@ def display_value(key: str, value: str) -> str:
     return value
 
 
-def build_plan():
-    """Returns the ordered list of sweep points: baseline + one per (param, value)."""
+def build_plan(suffix=None):
+    """Returns the ordered list of sweep points: baseline + one per (param, value).
+
+    If `suffix` is given, it is sanitized and appended to every tag
+    (e.g. tag "gpu-memory-utilization-0-80" -> "gpu-memory-utilization-0-80-<suffix>").
+    k8s Job names / ConfigMap labels are RFC-1123 (no underscores), so the
+    separator is a dash even though you might type it as `_<suffix>`. The raw
+    suffix is also stored on each plan item so tooling can label runs by it.
+    """
+    suffix_label = suffix or ""
+    suffix_tag = sanitize(suffix) if suffix else ""
+
+    def with_suffix(tag):
+        return "{}-{}".format(tag, suffix_tag) if suffix_tag else tag
+
     plan = [
-        dict(tag="baseline", param="baseline", key=None, value=None, overrides={})
+        dict(tag=with_suffix("baseline"), base_tag="baseline", suffix=suffix_label,
+             param="baseline", key=None, value=None, overrides={})
     ]
     for sweep in SWEEP:
         key = sweep["key"]
@@ -105,10 +119,12 @@ def build_plan():
         for value in sweep["values"]:
             if value == baseline_value:
                 continue  # already covered by the baseline run
-            tag = f"{sanitize(sweep['param'])}-{sanitize(display_value(key, value))}"
+            base_tag = f"{sanitize(sweep['param'])}-{sanitize(display_value(key, value))}"
             plan.append(
                 dict(
-                    tag=tag,
+                    tag=with_suffix(base_tag),
+                    base_tag=base_tag,
+                    suffix=suffix_label,
                     param=sweep["param"],
                     key=key,
                     value=value,

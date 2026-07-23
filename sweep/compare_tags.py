@@ -8,8 +8,8 @@ stack up against config B?" (e.g. baseline vs. a specific tuned value, or two
 candidate configs you're deciding between). This script answers exactly that,
 for whichever two tags you name.
 
-Reads `results/aggregated.csv` (produced by `sweep/aggregate.py`) and writes
-two PNGs to `results/plots/compare/`:
+Reads the pulled GuideLLM result JSONs directly (via load_results.py) and
+writes two PNGs to `results/plots/compare/`:
 
   - `<tag_a>_vs_<tag_b>_rate.png`        - grouped bar chart, rate test
     (single steady-rate offered load -> one bar pair per metric).
@@ -41,8 +41,11 @@ import pandas as pd
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
+sys.path.insert(0, str(HERE))
+from load_results import load_results  # noqa: E402
 
-CSV_PATH = REPO / "results" / "aggregated.csv"
+RESULTS_DIR = REPO / "results" / "outputs"
+MANIFEST_PATH = HERE / "manifest.jsonl"
 OUT_DIR = REPO / "results" / "plots" / "compare"
 
 CMAP = plt.get_cmap("tab10")
@@ -70,14 +73,6 @@ METRICS = [
 
 
 # %%
-def load_data(csv_path):
-    if not csv_path.exists():
-        sys.exit(
-            "{} not found -- run sweep/aggregate.py first.".format(csv_path)
-        )
-    return pd.read_csv(csv_path)
-
-
 def resolve_tag(df, requested):
     """Exact match first; falls back to a unique substring match; otherwise
     exits with the closest suggestions (typos / partial tags are common when
@@ -97,9 +92,8 @@ def resolve_tag(df, requested):
         )
     suggestions = difflib.get_close_matches(requested, tags, n=5)
     sys.exit(
-        "tag '{}' not found in {}.\n{}".format(
+        "tag '{}' not found in results/.\n{}".format(
             requested,
-            CSV_PATH,
             "Did you mean: {}".format(suggestions) if suggestions else
             "Available tags: {}".format(sorted(tags)),
         )
@@ -272,17 +266,17 @@ def main():
     )
     ap.add_argument("tag_a", help="first tag (e.g. 'baseline')")
     ap.add_argument("tag_b", help="second tag to compare against tag_a")
-    ap.add_argument("--csv", default=str(CSV_PATH), help="path to aggregated.csv")
+    ap.add_argument("--results-dir", default=str(RESULTS_DIR), help="dir of pulled result JSONs")
+    ap.add_argument("--manifest", default=str(MANIFEST_PATH), help="path to manifest.jsonl")
     ap.add_argument("--out-dir", default=str(OUT_DIR), help="directory to write PNGs to")
     ap.add_argument("--label-a", default=None, help="display label for tag_a (default: the tag itself)")
     ap.add_argument("--label-b", default=None, help="display label for tag_b (default: the tag itself)")
     args = ap.parse_args()
 
-    csv_path = Path(args.csv)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    df = load_data(csv_path)
+    df = load_results(results_dir=args.results_dir, manifest_path=args.manifest)
     tag_a = resolve_tag(df, args.tag_a)
     tag_b = resolve_tag(df, args.tag_b)
     if tag_a == tag_b:
@@ -298,9 +292,9 @@ def main():
     conc_b = df_b[df_b["test_type"] == "concurrent"]
 
     if rate_a.empty and conc_a.empty:
-        sys.exit("no rows found for tag '{}' in {}".format(tag_a, csv_path))
+        sys.exit("no rows found for tag '{}' in results/".format(tag_a))
     if rate_b.empty and conc_b.empty:
-        sys.exit("no rows found for tag '{}' in {}".format(tag_b, csv_path))
+        sys.exit("no rows found for tag '{}' in results/".format(tag_b))
 
     print_delta_table(rate_a, rate_b, conc_a, conc_b, label_a, label_b)
 
