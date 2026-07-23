@@ -140,7 +140,7 @@ def build_row(tag, test_type, target, bench, manifest_rec, strategy):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--results-dir", default=str(REPO / "results"))
+    ap.add_argument("--results-dir", default=str(REPO / "results/outputs"))
     ap.add_argument("--manifest", default=str(HERE / "manifest.jsonl"))
     ap.add_argument("--scenarios-dir", default=str(REPO / "scenarios"))
     ap.add_argument("--out", default=str(REPO / "results" / "aggregated.csv"))
