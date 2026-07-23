@@ -99,13 +99,21 @@ CMAP = plt.get_cmap("tab10")
 # ---------------------------------------------------------------------------
 # Load + clean
 # ---------------------------------------------------------------------------
-def prepare_frames(results_dir, manifest_path):
+def prepare_frames(results_dir, manifest_path, suffix=None):
     df = load_results(results_dir=results_dir, manifest_path=manifest_path)
     dropped = sorted(set(df["tag"]) & DROP_TAGS)
     if dropped:
         print("Dropping {} stray/untagged run(s) with no manifest entry: {}".format(
             len(dropped), dropped))
         df = df[~df["tag"].isin(DROP_TAGS)].copy()
+    if suffix:
+        available = sorted(s for s in df["suffix"].unique() if s)
+        df = df[df["suffix"] == suffix].copy()
+        if df.empty:
+            sys.exit("no runs found with suffix '{}'. Suffixes present: {}\n"
+                     "(did you pull them? e.g. ./run.sh pull {})".format(
+                         suffix, available or "(none)", suffix))
+        print("Filtered to suffix '{}': {} tag(s).".format(suffix, df["tag"].nunique()))
     rate_df = df[df["test_type"] == "rate"].copy()
     conc_df = df[df["test_type"] == "concurrent"].copy()
     print("  -> {} rate-test tag(s), {} concurrent-test tag(s).".format(
@@ -224,7 +232,7 @@ def param_rows(df, sweep_item):
     return out.drop_duplicates(subset=["value_display", "test_type", "target"])
 
 
-def plot_param_detail(sweep_item, rate_df, conc_df, out_dir):
+def plot_param_detail(sweep_item, rate_df, conc_df, out_dir, name_suffix=""):
     param = sweep_item["param"]
     rate_rows = param_rows(rate_df, sweep_item)
     conc_rows = param_rows(conc_df, sweep_item)
@@ -284,7 +292,7 @@ def plot_param_detail(sweep_item, rate_df, conc_df, out_dir):
     bottom_pos = axes[2, 0].get_position()
     fig.text(0.01, top_pos.y1, "rate test", fontsize=10, fontweight="bold", va="top")
     fig.text(0.01, bottom_pos.y1, "concurrency\nscaling", fontsize=10, fontweight="bold", va="top")
-    out_path = out_dir / "param_{}.png".format(sanitize(param))
+    out_path = out_dir / "param_{}{}.png".format(sanitize(param), name_suffix)
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
     print("wrote", out_path)
@@ -397,6 +405,12 @@ def main():
         "--param", default=None,
         help="plot only this one parameter's sweep (param name, sanitized name, "
         "or unique substring). Skips the overview/frontier/recommendation.")
+    ap.add_argument(
+        "--suffix", default=None,
+        help="only plot runs tagged with this custom suffix (run_sweep.py "
+        "--suffix <s>). Combine with --param to drill into one parameter. "
+        "Note: suffixed values are also always shown as '<value> [<suffix>]' "
+        "series in the normal per-parameter plots.")
     ap.add_argument("--results-dir", default=str(REPO / "results" / "outputs"))
     ap.add_argument("--manifest", default=str(HERE / "manifest.jsonl"))
     ap.add_argument("--out-dir", default=str(OUT_DIR))
@@ -407,12 +421,16 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    _, rate_df, conc_df = prepare_frames(args.results_dir, args.manifest)
+    _, rate_df, conc_df = prepare_frames(args.results_dir, args.manifest, suffix=args.suffix)
+
+    # Tag output filenames with the suffix so a scoped run doesn't overwrite
+    # the full-sweep plots (e.g. param_max-num-batched-tokens-decode-heavy.png).
+    fsfx = "-{}".format(sanitize(args.suffix)) if args.suffix else ""
 
     # ---- single-parameter mode -------------------------------------------
     if args.param:
         sweep_item = resolve_param(args.param)
-        rate_rows = plot_param_detail(sweep_item, rate_df, conc_df, out_dir)
+        rate_rows = plot_param_detail(sweep_item, rate_df, conc_df, out_dir, name_suffix=fsfx)
         if rate_rows is None or len(rate_rows) <= 1:
             print("\nNo usable non-baseline data for '{}' yet.".format(sweep_item["param"]))
             return
@@ -424,13 +442,13 @@ def main():
         return
 
     # ---- full sweep mode --------------------------------------------------
-    plot_overview_rate(rate_df, out_dir / "00_overview_rate.png")
-    plot_overview_concurrent(conc_df, out_dir / "00_overview_concurrent.png")
-    plot_frontier(conc_df, out_dir / "01_latency_throughput_frontier.png")
+    plot_overview_rate(rate_df, out_dir / "00_overview_rate{}.png".format(fsfx))
+    plot_overview_concurrent(conc_df, out_dir / "00_overview_concurrent{}.png".format(fsfx))
+    plot_frontier(conc_df, out_dir / "01_latency_throughput_frontier{}.png".format(fsfx))
 
     param_rate_data = {}
     for sweep_item in SWEEP:
-        result = plot_param_detail(sweep_item, rate_df, conc_df, out_dir)
+        result = plot_param_detail(sweep_item, rate_df, conc_df, out_dir, name_suffix=fsfx)
         if result is not None:
             param_rate_data[sweep_item["param"]] = result
 
@@ -453,7 +471,7 @@ def main():
             recommended_overrides[sweep_item["key"]] = recommended
 
     leaderboard = pd.concat(leaderboard_frames, ignore_index=True) if leaderboard_frames else pd.DataFrame()
-    leaderboard_path = out_dir / "param_rankings.csv"
+    leaderboard_path = out_dir / "param_rankings{}.csv".format(fsfx)
     leaderboard.to_csv(leaderboard_path, index=False)
     print("\nwrote", leaderboard_path)
 
@@ -463,8 +481,9 @@ def main():
         for p in untested:
             print("  python3 sweep/run_sweep.py --only {} --resume".format(sanitize(p["param"])))
 
-    if args.no_recommend:
-        print("\n(--no-recommend: skipped writing recommended config)")
+    if args.no_recommend or args.suffix:
+        why = "--no-recommend" if args.no_recommend else "--suffix (scoped subset)"
+        print("\n({}: skipped writing recommended config)".format(why))
     else:
         write_recommended_config(recommended_overrides, RECOMMENDED_PARAMS_FILE)
         print("\n" + "=" * 78)

@@ -263,7 +263,19 @@ writes PNGs to `results/plots/`. With no arguments it renders the whole sweep:
 With `--param <name>` (accepts the param name, its sanitized form, or a unique
 substring) it renders and ranks just that one parameter's sweep — handy while
 iterating on a single knob. Custom-suffixed runs (`run_sweep.py --suffix`)
-appear as distinct series labelled `<value> [<suffix>]`.
+appear as distinct series labelled `<value> [<suffix>]`, and `--suffix <s>`
+restricts the whole view to just that suffix's runs (combine with `--param`
+to drill into one parameter of a suffixed sweep):
+
+```bash
+python3 sweep/plot_results.py --suffix decode-heavy                 # just that suffix
+python3 sweep/plot_results.py --suffix decode-heavy --param max-num-batched-tokens
+```
+
+Note the suffix is per-parameter, so a value like `512` under suffix
+`decode-heavy` becomes the tag `max-num-batched-tokens-512-decode-heavy`. To
+pull a whole suffixed sweep off the cluster, match on the suffix:
+`./run.sh pull decode-heavy`.
 
 In full mode it also ranks each parameter's tested values (excluding any whose
 error rate is too high to trust — see the script's `ERROR_RATE_THRESHOLD`,

@@ -27,7 +27,7 @@ RESULTS_PVC="vllm-sweep-results-pvc"   # this repo's own volume; see deployments
 PARAMS="${PARAMS:-$HERE/config/custom/flashinfer_cutlass.yaml}"
 SCEN_DIR="$HERE/scenarios"
 JOBS="$HERE/jobs"
-RESULTS_DIR="${RESULTS_DIR:-$HERE/results}"
+RESULTS_DIR="${RESULTS_DIR:-$HERE/results/outputs}"   # where the plot/loader scripts read from
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*" >&2; }
@@ -154,7 +154,7 @@ spec:
 YAML
   kubectl wait --for=condition=Ready pod/bench-reader -n "$NS" --timeout=120s >/dev/null
   local f
-  for f in $(kubectl exec bench-reader -n "$NS" -- sh -c "ls /results/${glob} 2>/dev/null"); do
+  for f in $(kubectl exec bench-reader -n "$NS" -- sh -c "ls /results/outputs/${glob} 2>/dev/null"); do
     log "  $(basename "$f")"
     kubectl exec bench-reader -n "$NS" -- cat "$f" > "$RESULTS_DIR/$(basename "$f")"
   done
