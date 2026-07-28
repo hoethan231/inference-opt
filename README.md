@@ -172,6 +172,46 @@ Currently swept (edit `SWEEP` in `sweep/grid.py` to add/remove/change values):
 | `gpu_memory_utilization` | 0.80, 0.85, 0.90, 0.95 | `GPU_MEMORY_UTILIZATION` |
 | `block_size` | 16, 32 | `BLOCK_SIZE` |
 | `max_model_len` | 8192, 32768, 131072, 262144 | `MAX_MODEL_LEN` |
+| `spec_decode_mtp` | 0 (baseline/off), 3, 4, 5 | `EXTRA_ARGS` (`--speculative-config`) |
+
+**Speculative decoding (MTP).** `spec_decode_mtp` sweeps
+`num_speculative_tokens` for Nemotron 3 Super's native Multi-Token Prediction
+head (no external draft model needed). `0` means spec decoding off, which the
+`baseline` run already covers, so only `3/4/5` create new runs. Unlike the other
+knobs it isn't a standalone ConfigMap key — it's a compact JSON blob *appended*
+to the baseline `EXTRA_ARGS`
+(`--speculative-config={"method":"nemotron_h_mtp","num_speculative_tokens":N}`).
+The JSON is deliberately space-free and uses the `--flag={...}` form because the
+Deployment entrypoint expands `$EXTRA_ARGS` **unquoted** (spaces/standalone
+quotes would word-split it into garbage, same as
+`config/custom/cache_offloading.yaml`'s `--kv-transfer-config={...}`).
+Run just this sweep with:
+
+```bash
+python3 sweep/run_sweep.py --only spec-decode --dry-run    # preview the 3 configs
+python3 sweep/run_sweep.py --only spec-decode --bench both  # run mtp 3/4/5
+python3 sweep/run_sweep.py --only spec-decode-mtp-5         # just the 5-token variant
+```
+
+`--only spec-decode` runs the three MTP variants only. The `0` (spec-off)
+point is the shared `baseline` run — run it once (`--only baseline`, or a full
+sweep) so `plot_results.py`/`compare_tags.py` have something to compare against:
+
+```bash
+python3 sweep/compare_tags.py baseline spec-decode-mtp-5   # spec decoding vs. off
+```
+
+Each spec-decode run also appends `--max-cudagraph-capture-size=128`: enabling
+MTP on top of the baseline (`0.9` util / `128` seqs, ~1 GiB free on the 95 GiB
+card) enlarges CUDA-graph capture and OOMs in `profile_cudagraph_memory` at
+startup. Capping the largest captured graph fixes the OOM while keeping
+cudagraphs **on**, so the spec runs stay comparable to the cudagraph-enabled
+baseline. If a variant still OOMs, drop `MAX_NUM_SEQS` (e.g. 64) or
+`GPU_MEMORY_UTILIZATION` (e.g. 0.85) for it.
+
+> Note: MTP interacts with other engine features; if a variant fails to start,
+> check the server log (`sweep/logs/spec-decode-mtp-*.log`) — some vLLM builds
+> need chunked prefill / prefix caching adjusted for Nemotron-H MTP.
 
 ### Running the sweep
 

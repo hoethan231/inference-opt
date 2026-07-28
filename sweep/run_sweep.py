@@ -52,9 +52,16 @@ def load_base_manifest():
         return yaml.safe_load(f)
 
 
-def generate_configmap(base_manifest, overrides, tag):
+def generate_configmap(base_manifest, overrides, tag, extra_args_append=None):
     manifest = copy.deepcopy(base_manifest)
     manifest["data"].update(overrides)
+    if extra_args_append:
+        base_extra = (manifest["data"].get("EXTRA_ARGS") or "").rstrip()
+        manifest["data"]["EXTRA_ARGS"] = (
+            "{} {}".format(base_extra, extra_args_append)
+            if base_extra
+            else extra_args_append
+        )
     manifest.setdefault("metadata", {}).setdefault("labels", {})[
         "sweep-tag"
     ] = sanitize(tag)[:63]
@@ -144,7 +151,9 @@ def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
     if custom_path:
         cfg_path = Path(custom_path)
     else:
-        cfg_path = generate_configmap(base_manifest, item["overrides"], tag)
+        cfg_path = generate_configmap(
+            base_manifest, item["overrides"], tag, item.get("extra_args_append")
+        )
 
     env = os.environ.copy()
     env["PARAMS"] = str(cfg_path)
@@ -156,6 +165,8 @@ def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
     print("\n{}".format("=" * 78))
     print("[{}] param={} value={} overrides={}".format(
         tag, item["param"], item["value"], item["overrides"]))
+    if item.get("extra_args_append"):
+        print("  EXTRA_ARGS += {}".format(item["extra_args_append"]))
     print("  config: {}".format(cfg_path))
     print("  log:    {}".format(log_path))
     print("=" * 78)
@@ -225,6 +236,8 @@ def run_one(item, base_manifest, bench, gpu_wait_timeout, attempt=0):
     )
     if custom_path:
         record["custom_config_path"] = str(cfg_path)
+    if item.get("extra_args_append"):
+        record["extra_args_append"] = item["extra_args_append"]
     append_manifest(record)
     print("[{}] -> {} ({:.1f}s)".format(tag, status.upper(), elapsed))
     if interrupted:

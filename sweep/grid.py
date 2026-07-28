@@ -79,6 +79,31 @@ SWEEP = [
     ),
 ]
 
+SPEC_DECODE_BASELINE_TOKENS = 0
+SPEC_DECODE_TOKENS = [0, 3, 4, 5]
+
+SPEC_DECODE = [
+    dict(
+        param="spec_decode_mtp",
+        method="nemotron_h_mtp",
+        note="native Multi-Token Prediction head (Nemotron-H MTP); no draft "
+        "model required",
+    ),
+]
+
+
+def spec_config_arg(method: str, num_speculative_tokens: int) -> str:
+    """Build the shell-safe EXTRA_ARGS fragment for one spec-decode run.
+
+    ``--max-cudagraph-capture-size=128`` is included because enabling MTP on top
+    will run an OOM error
+    """
+    blob = json.dumps(
+        {"method": method, "num_speculative_tokens": num_speculative_tokens},
+        separators=(",", ":"),
+    )
+    return "--speculative-config={} --max-cudagraph-capture-size=128".format(blob)
+
 
 def sanitize(value: str) -> str:
     """RFC-1123-ish label: lowercase alnum + dashes, matches run.sh's sanitize()."""
@@ -131,6 +156,23 @@ def build_plan(suffix=None):
                     overrides={key: value},
                 )
             )
+    for spec in SPEC_DECODE:
+        for tokens in SPEC_DECODE_TOKENS:
+            if tokens == SPEC_DECODE_BASELINE_TOKENS:
+                continue 
+            base_tag = "{}-{}".format(sanitize(spec["param"]), tokens)
+            plan.append(
+                dict(
+                    tag=with_suffix(base_tag),
+                    base_tag=base_tag,
+                    suffix=suffix_label,
+                    param=spec["param"],
+                    key=None,
+                    value=str(tokens),
+                    overrides={},
+                    extra_args_append=spec_config_arg(spec["method"], tokens),
+                )
+            )
     return plan
 
 
@@ -147,13 +189,18 @@ def main():
     print(f"{'tag':<32} {'param':<24} {'value':<12} overrides")
     print("-" * 90)
     for item in plan:
-        print(
-            f"{item['tag']:<32} {item['param']:<24} "
-            f"{display_value(item['key'], item['value']) if item['key'] else '(baseline)':<12} "
-            f"{item['overrides']}"
-        )
+        if item["key"]:
+            val = display_value(item["key"], item["value"])
+            overrides = str(item["overrides"])
+        elif item.get("extra_args_append"):
+            val = item["value"]
+            overrides = "EXTRA_ARGS += {}".format(item["extra_args_append"])
+        else:
+            val = "(baseline)"
+            overrides = str(item["overrides"])
+        print(f"{item['tag']:<32} {item['param']:<24} {val:<12} {overrides}")
     print("-" * 90)
-    print(f"{len(plan)} configs total (1 baseline + {len(plan) - 1} OFAT variants)")
+    print(f"{len(plan)} configs total (1 baseline + {len(plan) - 1} variants)")
 
 
 if __name__ == "__main__":

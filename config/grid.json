@@ -1,0 +1,13 @@
+{
+  "name": "grid",
+  "bench": "both",
+
+  "base_overrides": {},
+
+  "extra_args_append": "",
+
+  "grid": {
+    "MAX_NUM_SEQS": ["128", "256"],
+    "MAX_NUM_BATCHED_TOKENS": ["2048", "4096"]
+  }
+}
