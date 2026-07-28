@@ -24,7 +24,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: vllm
-          image: vllm/vllm-openai:v0.23.0
+          image: vllm/vllm-openai:v0.26.0
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
