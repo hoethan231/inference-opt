@@ -86,6 +86,18 @@ cmd_deploy() {
   log "vllm-server is READY."
 }
 
+reap_stale_bench() {
+  local stale
+  stale="$(kubectl get pods -n "$NS" -l app=guidellm \
+    --field-selector=status.phase!=Succeeded,status.phase!=Failed \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+  if [ -n "$stale" ]; then
+    warn "reaping stale benchmark pods before starting: $(echo "$stale" | tr '\n' ' ')"
+    # shellcheck disable=SC2086
+    kubectl delete pod -n "$NS" --grace-period=0 --force $stale >/dev/null 2>&1 || true
+  fi
+}
+
 # Run a single benchmark Job from a template, waiting for it to finish.
 run_one() {
   local test="$1" tag="$2" tmpl name
@@ -95,6 +107,7 @@ run_one() {
     *) die "unknown test '$test' (expected rate|concurrent)" ;;
   esac
   log "running '$test' benchmark  (job: $name)"
+  reap_stale_bench
   kubectl delete job "$name" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
   sed "s/__TAG__/$tag/g" "$tmpl" | kubectl apply -f - >/dev/null
   # Stream logs once the pod starts, then block on completion.

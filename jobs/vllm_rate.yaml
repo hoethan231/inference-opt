@@ -12,6 +12,7 @@ metadata:
     bench.test: rate
 spec:
   backoffLimit: 0
+  activeDeadlineSeconds: 1200
   ttlSecondsAfterFinished: 604800   # keep the Job object 7 days for inspection
   template:
     metadata:

@@ -12,6 +12,7 @@ metadata:
     bench.test: concurrent
 spec:
   backoffLimit: 0
+  activeDeadlineSeconds: 2400
   ttlSecondsAfterFinished: 604800
   template:
     metadata:
