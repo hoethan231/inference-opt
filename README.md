@@ -31,6 +31,32 @@ A run is the same four steps the old `run.sh` did, in a loop, per config:
 Nothing about that loop is hidden: `./bench render <experiment>` prints the exact
 manifests a run would apply, and applies nothing.
 
+### What gets recorded, and where to read it
+
+`./bench show <tag>` prints everything the store knows about one run, and is the
+answer to "what was this config actually served with?":
+
+* **Config as applied** — every key of the ConfigMap, with the ones this run set
+  marked, and `EXTRA_ARGS` split one flag per line. Copied from the manifest that
+  was applied, so it cannot drift from what ran. The same thing is on disk as
+  `runs/<tag>/config.yaml`.
+* **Engine facts** — vLLM version, KV cache size in tokens and GiB, the maximum
+  concurrency vLLM computed for that cache, and graph capture time, all read out
+  of the server's own startup log (`runs/<tag>/server.log`) once it goes Ready. A
+  config left with only a sliver of KV cache is slow for a reason no latency chart
+  shows. Alongside them, from the labels of the node the pod landed on: the GPU
+  model, how many that node has, the driver version and the node name — so moving
+  host reads as an environment change rather than a regression in whatever was
+  being swept.
+* **Outcome** — status, how long it took, the smoke-test response, and for a
+  failure the evidence line that caused it to be abandoned.
+* **Files** — the raw GuideLLM JSON and HTML per workload, the benchmark job logs,
+  and `engine.log`, which is the server log captured *during* the benchmark rather
+  than at startup.
+
+Runs imported by `bench migrate` have a config but no engine facts: the old
+scripts never captured them.
+
 ## Defining what to measure
 
 An experiment is one YAML file under `experiments/`, filed by how many GPUs it
@@ -145,6 +171,7 @@ because it is usually a different question (a different workload, or a rerun);
 
 ```bash
 ./bench runs                          # what has been measured, with tags
+./bench show <tag>                    # one run in full: config, engine, files
 ./bench report ofat-scheduler         # overview, frontier and per-axis figures
 ./bench report ofat-scheduler --param max_num_seqs   # drill into one axis
 ./bench report --all                  # everything, every model, on shared axes

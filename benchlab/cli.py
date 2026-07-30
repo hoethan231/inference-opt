@@ -31,6 +31,7 @@ examples:
   ./bench run ofat-scheduler --only mns      just one axis
   ./bench report ofat-scheduler              plots for every config in it
   ./bench runs                               what has been measured, with tags
+  ./bench show <tag>                         one run's config, engine facts, files
   ./bench compare <tag> <tag>                head-to-head deltas
   ./bench status                             what the cluster is doing now
 """
@@ -230,6 +231,97 @@ def cmd_runs(args: argparse.Namespace) -> int:
     )
     util.step("head-to-head: ./bench compare <tag> <tag>  (a unique substring works too)")
     return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    """Everything recorded about one run: config as applied, engine, artefacts.
+
+    The index holds all of this per attempt, but reading JSONL by hand to answer
+    "what was this run actually given, and what did the engine make of it" is not
+    a reasonable ask.
+    """
+    record = store.resolve_tag(args.tag)
+    run_dir = settings.REPO / record.run_dir if record.run_dir else store.run_dir(record.tag)
+
+    util.rule(record.tag)
+    facts = [
+        ["experiment", f"{record.experiment} ({record.strategy})"],
+        ["model", f"{record.model}  [{record.hf_repo or '?'}]"],
+        ["gpus", record.topology.label],
+        ["axis", f"{record.param} = {record.value}" if record.param else "-"],
+        ["suffix", record.suffix or "-"],
+        ["status", record.status + (f" ({record.failure_kind})" if record.failure_kind else "")],
+        ["attempt", record.attempt or "-"],
+        ["started", (record.started_at or "-")[:19].replace("T", " ")],
+        ["took", util.human_duration(record.elapsed_s)],
+        ["workloads", ", ".join(record.workloads) or "-"],
+        ["results", ", ".join(sorted(record.results or {})) or "none written"],
+    ]
+    print(util.table(["", ""], facts))
+
+    if record.failure_detail:
+        print()
+        util.warn(record.failure_detail)
+
+    print()
+    util.rule("engine, read from the server log at startup")
+    if record.engine:
+        print(util.table(["fact", "value"], sorted(record.engine.items())))
+    else:
+        util.step(
+            "nothing recorded — either the run predates this tool (see `bench migrate`) "
+            "or the server never came up"
+        )
+    if record.smoke:
+        util.step(f"smoke test: {record.smoke}")
+
+    print()
+    util.rule("config as applied (* = set by this run, not the base)")
+    extra_args = record.params.get("EXTRA_ARGS", record.extra_args)
+    rows = [
+        ["*" if key in record.overrides else "", key, util.elide(str(value), 60)]
+        for key, value in sorted(record.params.items())
+        if key != "EXTRA_ARGS"
+    ]
+    print(util.table(["", "key", "value"], rows) if rows else "  (no config recorded)")
+    if extra_args:
+        print()
+        print("  EXTRA_ARGS:")
+        for flag in extra_args.split():
+            print(f"    {flag}")
+
+    print()
+    util.rule("files")
+    if run_dir.exists():
+        files = sorted(run_dir.iterdir(), key=lambda p: p.name)
+        print(
+            util.table(
+                ["file", "size", "what"],
+                [[p.name, f"{p.stat().st_size / 1024:.0f}K", _blurb(p)] for p in files],
+            )
+        )
+        util.step(f"in {run_dir}")
+    else:
+        util.step(f"{run_dir} does not exist")
+    return 0
+
+
+# The per-run directory is only self-explanatory if you built it.
+_FILE_BLURB = {
+    "summary.json": "parsed metrics, cached for `bench report`",
+    "config.yaml": "the exact ConfigMap this run was served with",
+    "server.log": "vLLM startup log — where the engine facts above come from",
+    "engine.log": "vLLM log captured while the benchmark was running",
+}
+_SUFFIX_BLURB = {
+    ".json": "raw GuideLLM results",
+    ".html": "GuideLLM's own report — open it in a browser",
+    ".log": "benchmark job output",
+}
+
+
+def _blurb(path: Path) -> str:
+    return _FILE_BLURB.get(path.name) or _SUFFIX_BLURB.get(path.suffix, "")
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -432,6 +524,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-failed", action="store_true", help="also list runs that did not succeed"
     )
     runs_parser.set_defaults(func=cmd_runs)
+
+    show_parser = subparsers.add_parser(
+        "show", help="everything recorded about one run: config, engine facts, files"
+    )
+    show_parser.add_argument("tag", help="run tag, or a unique substring of one")
+    show_parser.set_defaults(func=cmd_show)
 
     compare_parser = subparsers.add_parser(
         "compare", help="head-to-head deltas between two runs"
