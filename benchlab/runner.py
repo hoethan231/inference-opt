@@ -178,9 +178,8 @@ def _execute(
         manifest = render.params_configmap(settings.Cluster.load(), run)
         (run_dir / "config.yaml").write_text(manifest)
 
-        kube.wait_for_free_gpu(options.gpu_wait_timeout)
-        kube.free_gpu()
-        util.step("applying config and restarting the server")
+        kube.ensure_gpus(run.topology.gpus, options.gpu_wait_timeout)
+        util.step(f"applying config and restarting the server on {run.topology.human}")
         kube.apply_params(run)
 
         # 2. deploy, aborting early on a config that cannot start.

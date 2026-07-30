@@ -1,0 +1,50 @@
+# Does a second GPU help? The measurement everything else in multi-gpu/ waits on.
+#
+# One factor, two configs: the current single-GPU engine against the same config
+# sharded over both GPUs. Nothing else moves, so the delta is the topology.
+#
+# What is being traded, on this hardware specifically:
+#
+#   for   Weights stop crowding out the KV cache. At TENSOR_PARALLEL_SIZE 1 the
+#         120B NVFP4 checkpoint takes 69.62 GiB of the 85.47 GiB budget and the
+#         cache gets what is left — 13.61 GiB, 584,362 tokens, which vLLM reports
+#         as 2.23x maximum concurrency at this context length. Halving the weight
+#         footprint per device should leave several times that, and the
+#         coding-agent workloads need it: their shared-prefix pool alone is
+#         311,296 tokens, so under load the prefix cache thrashes to a 0% hit rate
+#         with most requests deferred.
+#   against  These two cards have no NVLink (PCIe Gen5 x16, `nvidia-smi nvlink -s`
+#         is empty), so every layer's all-reduce crosses the bus. Inter-token
+#         latency is where that shows up, and it can get worse even as tail
+#         latency and throughput improve.
+#
+# Which is why this is a measurement and not an assumption. Read the ITL panels
+# against the TTFT and throughput panels before re-tuning anything on two GPUs:
+#
+#   ./bench run multi-gpu/tp-scaling --dry-run
+#   ./bench run multi-gpu/tp-scaling
+#   ./bench compare tp-scaling-baseline tp-scaling-tp-2
+#
+# Two follow-ups this experiment does NOT answer, deliberately — one factor at a
+# time. MAX_NUM_SEQS stays at the model default of 128, so if TENSOR_PARALLEL_SIZE
+# 2 wins, the scheduler axes are worth re-running at that topology, because their
+# old optimum was found while KV cache was the binding constraint. And tensor
+# parallelism is not the only shape two GPUs allow: DATA_PARALLEL_SIZE 2 gives two
+# independent replicas with no per-token communication (the throughput play rather
+# than the capacity play), and EXPERT_PARALLEL suits this MoE checkpoint. Both are
+# separate experiments once this one has a baseline to argue against.
+
+name: tp-scaling
+description: Single-GPU engine against the same config tensor-parallel over both GPUs.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: ofat
+  axes:
+    - key: TENSOR_PARALLEL_SIZE
+      abbrev: tp
+      note: >-
+        GPUs one engine shards its weights over. 1 is the baseline and is skipped
+        as a separate run, since the baseline config already measures it.
+      values: ["1", "2"]

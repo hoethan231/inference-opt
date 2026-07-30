@@ -31,9 +31,16 @@ results_pvc: vllm-sweep-results-pvc
 results_mount: /app/results
 model_mount: /models
 
-# Other engines on this single-GPU cluster that must be scaled to 0 before we
-# can deploy. Any *other* GPU-requesting pod is detected dynamically and waited
-# on instead (see `bench run --gpu-wait-timeout`).
+# GPUs on the node our engine lands on. A pod's GPUs all come from one node, so
+# this is the ceiling on TENSOR x PIPELINE x DATA for any single config, and
+# `bench run` refuses a config that asks for more instead of letting the pod sit
+# Pending. Declared rather than discovered so `--dry-run` and `bench render`
+# still need no cluster access.
+gpus_per_node: 2
+
+# Other engines sharing those GPUs. They are scaled to 0 only when the run
+# actually needs the devices they are holding; any *other* GPU-requesting pod is
+# detected dynamically and waited on instead (see `bench run --gpu-wait-timeout`).
 gpu_rivals:
   - kind: deployment
     name: sglang-nemotron

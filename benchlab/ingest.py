@@ -180,7 +180,28 @@ def _record_fields(record: RunRecord) -> dict[str, Any]:
         "label": record.label,
         "suffix": record.suffix or "",
         "status": record.status,
+        "topology": record.topology.label,
+        "gpus": record.topology.gpus,
     }
+
+
+# Columns that qualify a measurement rather than describe it: two runs sharing an
+# axis value are still not the same series if either of these differs.
+QUALIFIERS = ("model", "topology")
+
+
+def label_prefixes(df: pd.DataFrame) -> list[str]:
+    """Which qualifier columns a series label in this frame has to name.
+
+    Naming them unconditionally would clutter every legend in the common case of
+    one model on one topology; omitting them when they vary would silently plot a
+    two-GPU run and a one-GPU run as the same line.
+    """
+    return [column for column in QUALIFIERS if df[column].nunique() > 1]
+
+
+def series_label(row: pd.Series, prefixes: list[str], value: str) -> str:
+    return ": ".join([*(str(row[column]) for column in prefixes), value])
 
 
 def frame(records: list[RunRecord], *, quiet: bool = False, refresh: bool = False) -> pd.DataFrame:
@@ -212,11 +233,9 @@ def frame(records: list[RunRecord], *, quiet: bool = False, refresh: bool = Fals
         return f"{value} [{row['suffix']}]" if row["suffix"] else value
 
     df["value_display"] = df.apply(display, axis=1)
-    # When several models are in view, series labels have to say which.
-    multi_model = df["model"].nunique() > 1
+    prefixes = label_prefixes(df)
     df["series"] = df.apply(
-        lambda r: f"{r['model']}: {r['value_display']}" if multi_model else r["value_display"],
-        axis=1,
+        lambda r: series_label(r, prefixes, r["value_display"]), axis=1
     )
     # Series labels key the plots and their legends, so two different runs must
     # never share one — otherwise they'd be drawn over each other, or dropped as
@@ -233,6 +252,13 @@ def frame(records: list[RunRecord], *, quiet: bool = False, refresh: bool = Fals
             f"loaded {len(df)} rows from {df['tag'].nunique()} run(s), "
             f"{df['workload'].nunique()} workload(s), {df['model'].nunique()} model(s)"
         )
+        shapes = sorted(df["topology"].unique())
+        if len(shapes) > 1:
+            util.step(
+                f"this view mixes GPU topologies ({', '.join(shapes)}); each series "
+                f"names its own, but a difference between them is a difference of "
+                f"hardware shape, not of the swept knob"
+            )
     return df
 
 

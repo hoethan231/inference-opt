@@ -83,8 +83,8 @@ def _add_run_args(parser: argparse.ArgumentParser) -> None:
         "--gpu-wait-timeout",
         type=int,
         default=180,
-        help="seconds to wait for another workload to release the shared GPU "
-        "before deploying anyway (default: 180)",
+        help="seconds to wait for other workloads to release enough GPUs for this "
+        "config's parallelism before deploying anyway (default: 180)",
     )
     parser.add_argument(
         "--no-preseed",
@@ -135,8 +135,8 @@ def cmd_render(args: argparse.Namespace) -> int:
     _, _, model = experiment.resolved()
     print(f"# --- ConfigMap for {run.tag} ---")
     print(render.params_configmap(cluster, run))
-    print(f"# --- Deployment + Service ({model.name}) ---")
-    print(render.deployment(cluster, model))
+    print(f"# --- Deployment + Service ({model.name}, {run.topology.human}) ---")
+    print(render.deployment(cluster, model, run))
     for workload in workload_registry.load_many(run.workloads):
         print(f"# --- benchmark Job: {workload.name} ---")
         print(render.benchmark_job(cluster, run, workload))
@@ -215,6 +215,7 @@ def cmd_runs(args: argparse.Namespace) -> int:
             r.tag,
             r.experiment,
             r.model,
+            r.topology.label,
             r.status,
             ", ".join(sorted(r.results or {})) or "-",
             (r.finished_at or "")[:16].replace("T", " "),
@@ -222,7 +223,11 @@ def cmd_runs(args: argparse.Namespace) -> int:
         for r in records
     ]
     util.rule(f"{len(rows)} run(s)")
-    print(util.table(["tag", "experiment", "model", "status", "workloads", "finished"], rows))
+    print(
+        util.table(
+            ["tag", "experiment", "model", "gpus", "status", "workloads", "finished"], rows
+        )
+    )
     util.step("head-to-head: ./bench compare <tag> <tag>  (a unique substring works too)")
     return 0
 
@@ -330,13 +335,19 @@ def cmd_models(args: argparse.Namespace) -> int:
         rows.append(
             [
                 experiment.name,
+                spec.group(experiment.path),
                 experiment.kind,
                 experiment.model,
+                plan_mod.topology_summary(runs),
                 len(runs),
                 util.human_duration(plan_mod.estimate_seconds(runs)),
             ]
         )
-    print(util.table(["name", "kind", "model", "configs", "≈ time"], rows))
+    print(
+        util.table(
+            ["name", "group", "kind", "model", "gpus", "configs", "≈ time"], rows
+        )
+    )
     return 0
 
 

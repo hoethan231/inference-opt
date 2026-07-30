@@ -18,8 +18,19 @@ params:
   HF_HOME: /models/huggingface
   HF_HUB_ENABLE_HF_TRANSFER: "1"
 
-  # Hyperparameters. Models and experiments override these freely.
+  # Parallelism. TENSOR x PIPELINE x DATA is how many GPUs the engine pod
+  # requests, so these four keys decide the shape of the deployment and not just
+  # a flag: see benchlab/parallelism.py. Defaults are the single-GPU engine every
+  # run before July 2026 used, so an experiment that says nothing still measures
+  # what the older ones measured.
   TENSOR_PARALLEL_SIZE: "1"
+  PIPELINE_PARALLEL_SIZE: "1"
+  DATA_PARALLEL_SIZE: "1"
+  # MoE only, and only with more than one rank: spreads experts rather than
+  # sharding every tensor. 1 appends --enable-expert-parallel.
+  EXPERT_PARALLEL: "0"
+
+  # Hyperparameters. Models and experiments override these freely.
   GPU_MEMORY_UTILIZATION: "0.9"
   MAX_MODEL_LEN: "131072"
   KV_CACHE_DTYPE: "fp8"

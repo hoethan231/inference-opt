@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from . import settings
+from . import parallelism, settings
 from .model_registry import Model
 from .plan import Run
 from .settings import Cluster
@@ -88,12 +88,18 @@ def workloads_configmap(cluster: Cluster, workloads: list[Workload]) -> str:
     return yaml.safe_dump(manifest, default_flow_style=False, sort_keys=False, width=4096)
 
 
-def deployment(cluster: Cluster, model: Model) -> str:
+def deployment(cluster: Cluster, model: Model, run: Run) -> str:
+    """The engine Deployment for one config.
+
+    Takes the run, not just the model, because the pod's GPU request is a
+    function of the config's parallelism — the two cannot be allowed to disagree.
+    """
     values = _common(cluster)
     values.update(
         {
             "VLLM_IMAGE": model.image or cluster.image("vllm"),
             "MODEL_CACHE_PVC": model.cache_pvc,
+            "GPU_COUNT": str(parallelism.of(run.params).gpus),
         }
     )
     return _substitute(settings.DEPLOYMENT_TEMPLATE, values)

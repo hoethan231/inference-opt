@@ -51,6 +51,7 @@ class Cluster:
     results_pvc: str
     results_mount: str
     model_mount: str
+    gpus_per_node: int
     gpu_rivals: list[dict[str, str]]
     images: dict[str, str]
     timeouts: dict[str, int]

@@ -239,10 +239,12 @@ def _with_baseline(
             lambda r: f"{r['value']} [{r['suffix']}]" if r["suffix"] else str(r["value"]),
             axis=1,
         )
-        if df["model"].nunique() > 1:
-            baseline["series"] = baseline["model"] + ": " + baseline["value_display"]
-        else:
-            baseline["series"] = baseline["value_display"]
+        # Relabelled from the same rules as every other series, so a baseline on a
+        # different model or GPU topology says so instead of blending in.
+        prefixes = ingest.label_prefixes(df)
+        baseline["series"] = baseline.apply(
+            lambda r: ingest.series_label(r, prefixes, r["value_display"]), axis=1
+        )
 
     combined = pd.concat([baseline, rows], ignore_index=True)
     return combined.drop_duplicates(subset=["series", "workload", "target"])

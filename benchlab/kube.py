@@ -21,7 +21,7 @@ from typing import Any, Iterator
 
 import yaml
 
-from . import engine, render, util
+from . import engine, parallelism, render, util
 from .model_registry import Model
 from .plan import Run
 from .settings import Cluster
@@ -46,6 +46,19 @@ class JobOutcome:
     ok: bool
     reason: str
     detail: str = ""
+
+
+def _gpu_request(container: dict[str, Any]) -> int:
+    """GPUs one container holds. Extended resources can be declared either side."""
+    resources = container.get("resources", {}) or {}
+    for section in ("requests", "limits"):
+        value = (resources.get(section) or {}).get("nvidia.com/gpu")
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 1
+    return 0
 
 
 class Kube:
@@ -180,9 +193,9 @@ class Kube:
                 facts[key] = labels[label]
         return facts
 
-    # -- the single GPU ---------------------------------------------------
-    def foreign_gpu_holders(self) -> list[str]:
-        """Pods holding the GPU that aren't our engine."""
+    # -- sharing the GPUs -------------------------------------------------
+    def foreign_gpu_holders(self) -> list[tuple[str, int]]:
+        """(description, GPU count) for every live pod holding GPUs but ours."""
         pods = self.get_json("get", "pods").get("items", [])
         holders = []
         for pod in pods:
@@ -196,36 +209,70 @@ class Kube:
             phase = pod.get("status", {}).get("phase", "?")
             if phase in ("Succeeded", "Failed"):
                 continue
-            for container in pod.get("spec", {}).get("containers", []):
-                requests = (container.get("resources", {}) or {}).get("requests", {}) or {}
-                if "nvidia.com/gpu" in requests:
-                    holders.append(f"{name} ({phase})")
-                    break
+            held = sum(
+                _gpu_request(container)
+                for container in pod.get("spec", {}).get("containers", [])
+            )
+            if held:
+                holders.append((f"{name} ({phase}, {held} GPU)", held))
         return holders
 
-    def wait_for_free_gpu(self, timeout_s: int) -> bool:
+    def free_gpus(self) -> tuple[int, list[str]]:
+        """How many GPUs are available to us, and who is sitting on the rest.
+
+        Our own engine pod does not count against us: it is replaced, not joined,
+        so with strategy Recreate its devices come back before the new pod starts.
+        """
+        holders = self.foreign_gpu_holders()
+        taken = sum(count for _, count in holders)
+        return max(0, self.cluster.gpus_per_node - taken), [name for name, _ in holders]
+
+    def ensure_gpus(self, needed: int, timeout_s: int) -> bool:
+        """Get `needed` GPUs free, scaling down known rivals only if we must.
+
+        A two-GPU node makes "is the GPU free" the wrong question: a colleague's
+        single-GPU job can coexist with a single-GPU run of ours, and scaling it
+        down to take a device we do not need is just rude. Rivals therefore get
+        scaled down when the arithmetic says we are short, and not before.
+        """
+        free, holders = self.free_gpus()
+        if free >= needed:
+            if holders:
+                util.step(
+                    f"{free} of {self.cluster.gpus_per_node} GPU(s) free, enough for this "
+                    f"config; leaving {', '.join(holders)} alone"
+                )
+            return True
+
+        util.step(
+            f"need {needed} GPU(s), {free} free — scaling down known engines: "
+            f"{', '.join(r.get('name', '?') for r in self.cluster.gpu_rivals) or '(none)'}"
+        )
+        self.scale_down_rivals()
+
         deadline = time.time() + timeout_s
         warned = False
         while True:
-            holders = self.foreign_gpu_holders()
-            if not holders:
+            free, holders = self.free_gpus()
+            if free >= needed:
                 return True
             if time.time() >= deadline:
                 util.warn(
-                    f"GPU still held by {', '.join(holders)} after "
-                    f"{util.human_duration(timeout_s)}; deploying anyway"
+                    f"still only {free} of {needed} GPU(s) free after "
+                    f"{util.human_duration(timeout_s)} (held by {', '.join(holders)}); "
+                    f"deploying anyway"
                 )
                 return False
             if not warned:
                 util.step(
-                    f"GPU held by another workload ({', '.join(holders)}); waiting up to "
-                    f"{util.human_duration(timeout_s)} — this is a shared single-GPU cluster"
+                    f"waiting up to {util.human_duration(timeout_s)} for "
+                    f"{', '.join(holders)} to release {needed - free} more GPU(s)"
                 )
                 warned = True
             time.sleep(20)
 
-    def free_gpu(self) -> None:
-        """Scale down the other engines that share this GPU."""
+    def scale_down_rivals(self) -> None:
+        """Scale the other engines sharing these GPUs to zero and wait for them."""
         for rival in self.cluster.gpu_rivals:
             kind, name = rival.get("kind", "deployment"), rival.get("name")
             if not name:
@@ -277,7 +324,7 @@ class Kube:
         outgoing = self.server_pod()
         outgoing_uid = (outgoing or {}).get("metadata", {}).get("uid")
 
-        self.apply(render.deployment(self.cluster, model))
+        self.apply(render.deployment(self.cluster, model, run))
         self._kubectl(["rollout", "restart", f"deployment/{self.cluster.deployment}"])
 
         deadline = time.time() + timeout_s
@@ -734,12 +781,15 @@ class Kube:
         else:
             lines.append(f"{self.cluster.deployment}: not deployed")
         pods = self.get_json("get", "pods", "-l", f"app={self.cluster.app_label}").get("items", [])
+        ours = 0
         for pod in pods:
             meta, status = pod.get("metadata", {}), pod.get("status", {})
             containers = status.get("containerStatuses") or [{}]
+            held = sum(_gpu_request(c) for c in pod.get("spec", {}).get("containers", []))
+            ours += held
             lines.append(
                 f"  pod {meta.get('name')}: {status.get('phase')} "
-                f"restarts={containers[0].get('restartCount', 0)} "
+                f"gpus={held} restarts={containers[0].get('restartCount', 0)} "
                 f"node={pod.get('spec', {}).get('nodeName', '?')}"
             )
         cm = self.get_json("get", "configmap", self.cluster.params_configmap)
@@ -749,8 +799,20 @@ class Kube:
             lines.append(
                 f"live config: tag={labels.get('bench.tag', '?')} "
                 f"model={data.get('SERVED_MODEL_NAME', '?')} "
+                f"topology={parallelism.of(data).label} "
                 f"mns={data.get('MAX_NUM_SEQS', '?')} mnbt={data.get('MAX_NUM_BATCHED_TOKENS', '?')}"
             )
+        # Two different counts, because they answer different questions: what is
+        # idle right now, and what the next run can have. Our own engine's devices
+        # belong in the second — a redeploy takes the pod down before it starts the
+        # replacement — which is why they are named separately rather than summed.
+        free, holders = self.free_gpus()
+        lines.append(
+            f"GPUs: {self.cluster.gpus_per_node} on the node, {free} available to the "
+            f"next run"
+            + (f" ({ours} held by our engine, released on redeploy)" if ours else "")
+            + (f", {', '.join(holders)} held by others" if holders else "")
+        )
         return lines
 
     def bench_jobs(self) -> list[tuple[str, str, str]]:

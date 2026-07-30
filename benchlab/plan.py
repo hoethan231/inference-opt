@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 
-from . import settings, util, workload_registry
+from . import parallelism, settings, util, workload_registry
 from .spec import Axis, AxisValue, Experiment
 
 
@@ -32,16 +32,28 @@ class Run:
     def summary(self) -> str:
         return self.label or self.value or self.param
 
+    @property
+    def topology(self) -> parallelism.Topology:
+        return parallelism.of(self.params)
+
 
 def _compose(
     base_params: dict[str, str],
     base_extra_args: list[str],
     overrides: dict[str, str],
     extra_append: str,
+    where: str,
 ) -> tuple[dict[str, str], str]:
     params = dict(base_params)
     params.update(overrides)
     flags = list(base_extra_args)
+    # Parallelism that has no size flag of its own (expert parallel) is composed
+    # in here so it cannot go missing when an axis sets the key but the
+    # Deployment, which only knows about the numeric sizes, never sees it.
+    try:
+        flags += parallelism.parse(params).flags
+    except ValueError as exc:
+        util.die(f"{where}: {exc}")
     if extra_append:
         flags.append(extra_append)
     extra_args = " ".join(f for f in flags if f).strip()
@@ -70,6 +82,7 @@ def expand(
     tag_override: str | None = None,
 ) -> list[Run]:
     base_params, base_extra_args, model = experiment.resolved()
+    where = str(experiment.path or experiment.name)
     exp_tag = util.sanitize(experiment.name)
     suffix_tag = util.sanitize(suffix) if suffix else ""
     reserved = len(suffix_tag) + 1 if suffix_tag else 0
@@ -85,7 +98,9 @@ def expand(
         overrides: dict[str, str],
         extra_append: str,
     ) -> Run:
-        params, extra_args = _compose(base_params, base_extra_args, overrides, extra_append)
+        params, extra_args = _compose(
+            base_params, base_extra_args, overrides, extra_append, where
+        )
         tag = f"{base_tag}-{suffix_tag}" if suffix_tag else base_tag
         return Run(
             tag=util.fit_name(util.sanitize(tag), settings.MAX_TAG_LEN),
@@ -157,6 +172,7 @@ def expand(
             )
 
     _ensure_unique_tags(runs)
+    _ensure_schedulable(runs, where)
     return runs
 
 
@@ -175,6 +191,21 @@ def _ofat_tag(exp_tag: str, axis: Axis, label: str, reserved: int) -> str:
     if len(spelled) <= settings.MAX_TAG_LEN - reserved:
         return spelled
     return f"{exp_tag}-{axis.tag_abbrev()}-{value}"
+
+
+def _ensure_schedulable(runs: list[Run], where: str) -> None:
+    """Reject a config that asks for more GPUs than a node has, before deploying.
+
+    Caught here rather than at deploy time because the failure it prevents is
+    slow and misleading: the pod stays Pending (or, if the devices exist but are
+    held, hangs on a missing rank) until the rollout deadline, and the run is then
+    recorded as a failure of the axis under test.
+    """
+    available = settings.Cluster.load().gpus_per_node
+    for run in runs:
+        problem = parallelism.capacity_error(run.topology, available)
+        if problem:
+            util.die(f"{where}: config '{run.tag}' {problem}")
 
 
 def _ensure_unique_tags(runs: list[Run]) -> None:
@@ -202,6 +233,7 @@ def describe(runs: list[Run], experiment: Experiment) -> str:
         f"Experiment : {experiment.name}  ({experiment.kind})",
         f"Model      : {experiment.model}",
         f"Workloads  : {', '.join(runs[0].workloads) if runs else '-'}",
+        f"Topology   : {topology_summary(runs, verbose=True)}",
     ]
     if experiment.description:
         lines.append(f"Notes      : {experiment.description}")
@@ -231,6 +263,16 @@ def describe(runs: list[Run], experiment: Experiment) -> str:
     return "\n".join(lines)
 
 
+def topology_summary(runs: list[Run], *, verbose: bool = False) -> str:
+    """The GPU shape(s) a plan will deploy: `tp1, tp2`, or spelled out."""
+    shapes = {run.topology.label: run.topology for run in runs}
+    if not shapes:
+        return "-"
+    if verbose:
+        return ", ".join(topology.human for _, topology in sorted(shapes.items()))
+    return ", ".join(sorted(shapes))
+
+
 def _overrides_cell(run: Run) -> str:
     parts = [f"{k}={v}" for k, v in sorted(run.overrides.items())]
     if run.extra_args_append:
@@ -256,4 +298,11 @@ def filter_runs(runs: list[Run], only: str | None) -> list[Run]:
     return matched
 
 
-__all__ = ["Run", "describe", "estimate_seconds", "expand", "filter_runs"]
+__all__ = [
+    "Run",
+    "describe",
+    "estimate_seconds",
+    "expand",
+    "filter_runs",
+    "topology_summary",
+]

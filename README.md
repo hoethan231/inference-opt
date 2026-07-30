@@ -3,11 +3,6 @@
 One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
 Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
 different sizes, so they share one command, one results store and one report.
-# Inference optimization bench
-
-One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
-Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
-different sizes, so they share one command, one results store and one report.
 
 ```bash
 export HF_TOKEN=hf_xxx              # first time only; creates the Secret
@@ -26,7 +21,7 @@ A run is the same four steps the old `run.sh` did, in a loop, per config:
 
 1. **Render** the `vllm-params` ConfigMap for this config and apply it.
 2. **Refresh** the server — the Deployment is `strategy: Recreate`, so the old
-   pod releases the GPU before the new one starts — then wait until it is Ready
+   pod releases its GPUs before the new one starts — then wait until it is Ready
    and answering, and record what the engine actually did (KV-cache blocks,
    resolved engine args, vLLM version).
 3. **Benchmark** it with each workload, as a Kubernetes Job.
@@ -38,8 +33,9 @@ manifests a run would apply, and applies nothing.
 
 ## Defining what to measure
 
-An experiment is one YAML file in `experiments/`. Its `strategy.kind` decides
-how many configs come out of it:
+An experiment is one YAML file under `experiments/`, filed by how many GPUs it
+needs (`single-gpu/`, `multi-gpu/`). Its `strategy.kind` decides how many configs
+come out of it:
 
 | kind | configs | use it for |
 |---|---|---|
@@ -85,16 +81,18 @@ the experiment at another model picks up that model's method rather than
 hardcoding one. `abbrev:` fixes how the axis appears in tags
 (`spec-decode-mtp-5`); without it a tag spells the axis out and only falls back
 to an abbreviation when it would otherwise exceed the Kubernetes name limit.
-The shipped experiments are `baseline`, `ofat-scheduler`,
-`grid-scheduler`, `spec-decode`, `feature-probes` and `laguna-grid`; each one's
-header comment explains what it is for.
+Each shipped experiment's header comment explains what it is for.
+
+An experiment is named by its file, and the group is optional when you type it:
+`./bench run baseline` and `./bench run single-gpu/baseline` are the same thing,
+and the group only has to be spelled out if two groups hold the same name.
 
 ### Where a config's values come from
 
 Lowest precedence to highest:
 
 ```
-cluster/params-base.yaml  <  models/<model>.yaml  <  experiments/<exp>.yaml  <  the axis value
+cluster/params-base.yaml  <  models/<model>.yaml  <  experiments/**/<exp>.yaml  <  the axis value
 ```
 
 Model identity (`MODEL_NAME`, `SERVED_MODEL_NAME`) is applied last and can't be
@@ -119,112 +117,13 @@ spec_decode_method: nemotron_h_mtp
 
 Switching an experiment to another model is one line (`model: laguna-s-2.1`). If
 its weights aren't on the cache volume yet, `bench run` notices and pre-seeds the
-download first (a Job on whichever node has the GPU — no hostname is hardcoded).
-Reports label each series with its model when more than one is in view, so
-cross-model comparison happens at report time rather than needing its own mode.
-
-## Running
-| `single` | 1 | one config, e.g. a baseline or a candidate to confirm |
-| `ofat` | `sum(len(values) - 1) + 1` | finding each knob's best value on its own |
-| `grid` | product of the axes | proving a *combination*, once OFAT has narrowed it |
-
-An axis usually names a ConfigMap key:
-
-```yaml
-name: ofat-scheduler
-model: nemotron-3-super-120b
-workloads: [rate, concurrent]
-
-strategy:
-  kind: ofat
-  axes:
-    - key: MAX_NUM_SEQS
-      note: max concurrent running sequences — the scheduler's bouncer
-      values: ["32", "64", "128", "256"]
-```
-
-...but a value can change several things at once, or append a flag instead of
-setting a key — which is how speculative decoding, kernel probes and anything
-else without its own ConfigMap key are expressed:
-
-```yaml
-    - param: spec_tokens
-      abbrev: mtp
-      extra_args: >-
-        --speculative-config={{"method":"{spec_decode_method}","num_speculative_tokens":{value}}}
-      values: ["3", "4", "5"]
-
-    - param: feature
-      values:
-        - label: cutlass-moe
-          params: {MAX_NUM_SEQS: "256"}
-          extra_args: --moe-backend=flashinfer_cutlass
-```
-
-`{spec_decode_method}` and `{hf_repo}` come from the model registry, so pointing
-the experiment at another model picks up that model's method rather than
-hardcoding one. `abbrev:` fixes how the axis appears in tags
-(`spec-decode-mtp-5`); without it a tag spells the axis out and only falls back
-to an abbreviation when it would otherwise exceed the Kubernetes name limit.
-The shipped experiments are `baseline`, `ofat-scheduler`,
-`grid-scheduler`, `spec-decode`, `feature-probes` and `laguna-grid`; each one's
-header comment explains what it is for.
-
-### Where a config's values come from
-
-Lowest precedence to highest:
-
-```
-cluster/params-base.yaml  <  models/<model>.yaml  <  experiments/<exp>.yaml  <  the axis value
-```
-
-Model identity (`MODEL_NAME`, `SERVED_MODEL_NAME`) is applied last and can't be
-set by an experiment, so an experiment can never quietly serve a different
-checkpoint than the one in its `model:` field.
-
-## Multiple models
-
-A model file owns everything model-specific — weights, cache volume, image, the
-parser flags its chat template needs, and defaults for knobs whose ceiling is
-model-dependent:
-
-```yaml
-name: nemotron-3-super-120b
-hf_repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
-cache_pvc: nemotron-model-cache
-params:
-  MAX_MODEL_LEN: "262144"
-extra_args: [--trust-remote-code, --tool-call-parser=qwen3_coder]
-spec_decode_method: nemotron_h_mtp
-```
-
-Switching an experiment to another model is one line (`model: laguna-s-2.1`). If
-its weights aren't on the cache volume yet, `bench run` notices and pre-seeds the
-download first (a Job on whichever node has the GPU — no hostname is hardcoded).
+download first (a Job on whichever node has the GPUs — no hostname is hardcoded).
 Reports label each series with its model when more than one is in view, so
 cross-model comparison happens at report time rather than needing its own mode.
 
 ## Running
 
 ```bash
-./bench run ofat-scheduler --dry-run          # the plan and the wall-clock estimate
-./bench run ofat-scheduler                    # all of it
-./bench run ofat-scheduler --only max_num_seqs  # one axis (matches tag, axis or value)
-./bench run ofat-scheduler --resume           # carry on, skipping what already succeeded
-./bench run baseline --workloads rate         # cheaper: one workload
-./bench run ofat-scheduler --suffix rerun2    # same sweep, tags suffixed, nothing overwritten
-```
-
-Safe to interrupt: every attempt is recorded, so `--resume` picks up exactly
-what is left. A config that fails is retried once with a fresh deploy — except
-when it failed because it cannot fit in memory, which retrying cannot fix.
-
-`--suffix rerun2` turns `max-num-seqs-256` into `max-num-seqs-256-rerun2`.
-Reports treat a suffix as a separate group and keep it out of the default view,
-because it is usually a different question (a different workload, or a rerun);
-`--suffix rerun2` plots that group, `--all-suffixes` plots everything together.
-
-## Reading the results
 ./bench run ofat-scheduler --dry-run          # the plan and the wall-clock estimate
 ./bench run ofat-scheduler                    # all of it
 ./bench run ofat-scheduler --only max_num_seqs  # one axis (matches tag, axis or value)
@@ -272,6 +171,11 @@ completed no requests at all (its lines sit at zero, which looks fast), and a ru
 whose error rate is above 5% (its latencies describe only the requests that
 survived). Both are listed after the figures, and `bench doctor` finds them too.
 
+A series label names whatever varies besides the axis — its model, and its GPU
+topology — so a two-GPU run is never drawn as though it were a two-GPU-shaped
+result for a one-GPU config. `bench compare` says so explicitly when the two runs
+it was given did not use the same number of GPUs.
+
 ### About throughput
 
 Throughput in the plots is GuideLLM's `output_tokens_per_second`, not
@@ -292,8 +196,6 @@ want the per-request detail behind a number.
 ```bash
 ./bench doctor            # index vs. what's actually on disk
 ./bench doctor --fix      # mark unusable runs failed, so --resume redoes them
-./bench doctor            # index vs. what's actually on disk
-./bench doctor --fix      # mark unusable runs failed, so --resume redoes them
 ```
 
 `doctor` catches a run recorded as successful whose result file is missing,
@@ -302,15 +204,9 @@ append-only — a record is never rewritten, so retries and a killed sweep's
 history both stay visible, and readers take the last entry per tag.
 
 ## Cluster commands
-`doctor` catches a run recorded as successful whose result file is missing,
-truncated, or contains zero successful requests. `runs/index.jsonl` is
-append-only — a record is never rewritten, so retries and a killed sweep's
-history both stay visible, and readers take the last entry per tag.
-
-## Cluster commands
 
 ```bash
-./bench status            # server, benchmark jobs, recent runs
+./bench status            # server, GPUs, benchmark jobs, recent runs
 ./bench pull [tag]        # raw files off the results PVC
 ./bench clean jobs        # delete finished benchmark Jobs
 ./bench clean results     # wipe the results PVC (asks first; pull anything you want)
@@ -322,7 +218,9 @@ history both stay visible, and readers take the last entry per tag.
 ```
 bench                     # the entry point (a shim around `uv run`)
 benchlab/                 # the tool
-experiments/*.yaml        # what to measure
+experiments/
+  single-gpu/*.yaml       # what to measure on one GPU
+  multi-gpu/*.yaml        # what to measure across both
 models/*.yaml             # which model, and what it needs
 workloads/                # GuideLLM scenarios + index.yaml
 cluster/
@@ -359,11 +257,19 @@ directly; you declare **objects** and Kubernetes makes reality match them.
 A pod is isolated: it only sees settings you inject and disks you mount. That is
 why the token is a Secret and the weights are on a PVC.
 
-**The single-GPU rule.** There is one GPU, and the weights PVC is
-`ReadWriteOnce`, so exactly one engine pod can run at a time. `bench run` scales
-down the known rival engines listed in `cluster.yaml`, and if some *other*
-GPU-requesting pod is running it waits for it (`--gpu-wait-timeout`) rather than
-deadlocking against it.
+**One engine at a time, on two GPUs.** The node has two GPUs, and a config may
+use both (see below), so `bench run` works out how many devices the config needs
+and only scales down the rival engines in `cluster.yaml` when it is actually short
+— a colleague's single-GPU job can coexist with a single-GPU run of ours. If
+something else still holds the devices it waits (`--gpu-wait-timeout`) rather
+than deadlocking against it.
+
+What stops two of *our* engines running side by side is host memory, not GPUs:
+the pod requests 40Gi and the GPU node has ~47Gi allocatable. That is deliberate
+rather than a limitation to work around — two engines on one node would share
+PCIe, host memory bandwidth and the weights volume, and neither one's latency
+numbers would be comparable to anything else in the store. The second GPU is
+capacity for one engine, not a second lane for the sweep.
 
 **Why the results PVC is separate.** `vllm-sweep-results-pvc` belongs to this
 repo, so it can't fill up from — or be cleared alongside — other benchmarking
@@ -383,14 +289,44 @@ editing the Deployment:
 | `KV_CACHE_DTYPE` | `--kv-cache-dtype` — `fp8` roughly halves KV-cache size |
 | `GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization` |
 | `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` |
+| `PIPELINE_PARALLEL_SIZE` | `--pipeline-parallel-size` |
+| `DATA_PARALLEL_SIZE` | `--data-parallel-size` |
+| `EXPERT_PARALLEL` | `1` appends `--enable-expert-parallel` (MoE, more than one rank) |
 | `BLOCK_SIZE` | `--block-size` |
-| `VLLM_ATTENTION_BACKEND` | `--attention-backend`; empty means auto-select. It is passed as a flag because vLLM ≥0.13 no longer reads it as an env var ([vllm-project/vllm#26315](https://github.com/vllm-project/vllm/pull/26315)) |
+| `VLLM_ATTENTION_BACKEND` | read as an env var; empty means vLLM auto-selects |
 | `EXTRA_ARGS` | appended verbatim — the escape hatch for everything else |
 
 `EXTRA_ARGS` is composed from the `extra_args` lists (base, then model, then
 experiment, then axis) and never set directly, which is how configs used to drift
 apart. The entrypoint splits it with `eval set --`, so a flag whose value
 contains spaces or JSON survives.
+
+### Spreading one engine over both GPUs
+
+The three size knobs multiply into the number of GPUs the pod requests —
+`TENSOR × PIPELINE × DATA` — and that arithmetic, not a hand-written number, is
+what fills in the Deployment's `nvidia.com/gpu`
+(`benchlab/parallelism.py`). A config asking for more devices than a node has is
+refused when the plan is built, because the failure it would otherwise cause is
+slow and misleading: a pod stuck Pending, or an engine hanging on a rank that
+cannot start, recorded as a failure of whatever knob the sweep was measuring.
+
+The four are not interchangeable:
+
+| Knob | What it does | Costs |
+|---|---|---|
+| tensor | shards every layer across ranks | an all-reduce per forward pass |
+| pipeline | gives each rank a slice of the layers | one handoff per stage, and bubbles |
+| data | whole replicas behind one endpoint | nothing shared, so no comms — but no extra KV per replica either |
+| expert | spreads an MoE's experts over the ranks | needs more than one rank |
+
+On this hardware the trade is sharp, because the two RTX PRO 6000 Blackwell cards
+have **no NVLink** — tensor-parallel traffic crosses PCIe Gen5. Against that,
+tensor parallelism is what buys KV cache: at `TENSOR_PARALLEL_SIZE 1` the 120B
+NVFP4 weights take 69.62 GiB of the 85.47 GiB budget and the cache gets the
+remaining 13.61 GiB, which vLLM reports as 2.23x maximum concurrency at 262k
+context. `experiments/multi-gpu/tp-scaling.yaml` measures that trade rather than
+assuming it.
 
 ## The workloads
 
@@ -412,10 +348,13 @@ which fetches Python 3.12 and the pinned dependencies on first use. You need
 `uv` and a working `kubectl` context. Nothing else, and no virtualenv to
 activate.
 
-On the cluster side: one GPU node (RTX PRO 6000, ~96 GB), the default
-`nutanix-volume` StorageClass, and a model cache PVC. `HF_TOKEN` in the
-environment on first run creates the Secret; the results PVC is created if it is
-missing.
+On the cluster side: one GPU node (2x RTX PRO 6000 Blackwell Server Edition,
+~96 GB each, PCIe Gen5, no NVLink), the default `nutanix-volume` StorageClass,
+and a model cache PVC. `HF_TOKEN` in the environment on first run creates the
+Secret; the results PVC is created if it is missing. `gpus_per_node` in
+`cluster/cluster.yaml` is the declared device count — declared rather than
+discovered so `--dry-run` and `bench render` need no cluster access — so update it
+if the node changes.
 
 ## What happened to the old scripts
 
@@ -433,19 +372,7 @@ the store under `legacy-*` experiment names and still comparable:
 | Then | Now |
 |---|---|
 | edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>` |
-| `sweep/grid.py` `SWEEP` list | `experiments/*.yaml` |
-| `config/grid.json` + `run_grid.py` | `strategy.kind: grid` |
-| `config/custom/*.yaml` one-offs | one `ofat` axis of presets (`feature-probes`) |
-| two manifests + `param: "grid"` | `runs/index.jsonl` |
-| `plot_results.py` / `plot_grid.py` + CSVs | `./bench report` |
-| `check_results.py --fix-manifest` | `./bench doctor --fix` |
-./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95
-```
-
-| Then | Now |
-|---|---|
-| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>` |
-| `sweep/grid.py` `SWEEP` list | `experiments/*.yaml` |
+| `sweep/grid.py` `SWEEP` list | `experiments/**/*.yaml` |
 | `config/grid.json` + `run_grid.py` | `strategy.kind: grid` |
 | `config/custom/*.yaml` one-offs | one `ofat` axis of presets (`feature-probes`) |
 | two manifests + `param: "grid"` | `runs/index.jsonl` |
@@ -454,13 +381,8 @@ the store under `legacy-*` experiment names and still comparable:
 
 ## SGLang (later)
 
-Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPU and cache
+Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPUs and cache
 PVC) behind its own Service, with `--model-path` / `--chunked-prefill-size` /
-`--max-running-requests` instead of the vLLM flags. Because of the single-GPU
-rule you would still run one engine at a time; the benchmark Jobs point at
-whichever Service is live.
-Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPU and cache
-PVC) behind its own Service, with `--model-path` / `--chunked-prefill-size` /
-`--max-running-requests` instead of the vLLM flags. Because of the single-GPU
-rule you would still run one engine at a time; the benchmark Jobs point at
-whichever Service is live.
+`--max-running-requests` instead of the vLLM flags. You would still run one engine
+at a time, for the host-memory reason above; the benchmark Jobs point at whichever
+Service is live.
