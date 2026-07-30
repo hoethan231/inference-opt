@@ -1,0 +1,76 @@
+# =============================================================================
+# Weight pre-seed Job: download a model onto its cache PVC before benchmarking.
+#
+# Why: a cold download can eat most of the rollout timeout, so the first config
+# of a sweep would get recorded as a failure for reasons that have nothing to do
+# with the hyperparameters under test. `./bench run` probes the cache and runs
+# this automatically when the weights are missing (`--no-preseed` to skip,
+# `bench models preseed <model>` to force it).
+#
+# Requests no GPU, but IS pinned to the node holding the cache PVC: that volume
+# is ReadWriteOnce, and RWO only permits multiple mounts from a single node.
+# Without the pin this Job sits Pending forever with a multi-attach error. The
+# node is discovered at run time rather than hardcoded.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: __JOB_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app: model-preseed
+    bench.suite: vllm
+    bench.model: __MODEL_LABEL__
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: __DEADLINE__
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: model-preseed
+        bench.suite: vllm
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: __NODE__
+      containers:
+        - name: downloader
+          image: __VLLM_IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: __HF_SECRET__
+                  key: HF_TOKEN
+            - name: HF_HOME
+              value: __HF_HOME__
+            - name: HF_XET_HIGH_PERFORMANCE
+              value: "1"
+            - name: MODEL
+              value: __HF_REPO__
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "Pre-seeding ${MODEL} into ${HF_HOME}"
+              df -h __MODEL_MOUNT__
+              time hf download "${MODEL}"
+              echo "--- done; volume now: ---"
+              df -h __MODEL_MOUNT__
+              du -sh "${HF_HOME}/hub"/* 2>/dev/null || true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 24Gi
+          volumeMounts:
+            - name: model-cache
+              mountPath: __MODEL_MOUNT__
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: __MODEL_CACHE_PVC__

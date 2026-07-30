@@ -1,0 +1,50 @@
+# The one-off "does this even work on this GPU" probes.
+#
+# These were four hand-written ConfigMaps under config/custom/, each a full copy
+# of every parameter with one or two flags changed — so they drifted from the
+# baseline over time and it was impossible to tell which difference mattered.
+# As an axis of presets they share one baseline, and each probe states only what
+# it changes.
+#
+# Values here use the mapping form (label + params + extra_args), which is how to
+# express a change that touches more than one knob at once.
+#
+#   ./bench run feature-probes --only cutlass
+#   ./bench report feature-probes
+
+name: feature-probes
+description: Kernel, quantization and offloading probes, one workload each.
+model: nemotron-3-super-120b
+# Steady load only: these are feasibility checks, not tuning runs.
+workloads: [rate]
+
+strategy:
+  kind: ofat
+  axes:
+    - param: feature
+      abbrev: feat
+      values:
+        - label: flashinfer-cutlass-moe
+          params:
+            MAX_NUM_SEQS: "256"
+          extra_args: --max-cudagraph-capture-size=512 --moe-backend=flashinfer_cutlass
+
+        - label: nvfp4-weights
+          extra_args: --quantization=nvfp4
+
+        # Needs sm_120; noted as such after the original run.
+        - label: modelopt-nvfp4-kv-cache
+          params:
+            KV_CACHE_DTYPE: nvfp4
+            VLLM_ATTENTION_BACKEND: FLASH_ATTN
+          extra_args: --quantization=modelopt
+
+        # BLOCK_SIZE 8320 is carried over verbatim from the original
+        # config/custom/cache_offloading.yaml. It is an odd value for a KV block
+        # size — if this probe misbehaves, that is the first thing to question.
+        - label: cpu-cache-offloading
+          params:
+            MAX_NUM_SEQS: "256"
+            BLOCK_SIZE: "8320"
+          extra_args: >-
+            --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"CPUOffloadingSpec","cpu_bytes_to_use":17179869184}}

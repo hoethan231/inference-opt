@@ -1,0 +1,38 @@
+# Speculative decoding: sweep the number of speculative tokens for the model's
+# native Multi-Token Prediction head. No draft model needed.
+#
+# This is an axis that appends a flag rather than setting a ConfigMap key, which
+# is why `extra_args` takes a template. {spec_decode_method} comes from the model
+# registry, so pointing this experiment at a different model picks up that
+# model's method instead of hardcoding Nemotron's.
+#
+# Spec-decoding off is just the baseline, so it isn't repeated here — run
+# `./bench run baseline` once and compare against it:
+#
+#   ./bench run spec-decode
+#   ./bench compare baseline spec-decode-mtp-5
+#
+# --max-cudagraph-capture-size caps the largest captured CUDA graph: turning MTP
+# on top of the baseline (0.9 util, 128 seqs, ~1 GiB free on a 95 GiB card)
+# enlarges graph capture enough to OOM in profile_cudagraph_memory at startup.
+# Capping it fixes the OOM while leaving cudagraphs ON, so these runs stay
+# comparable to the cudagraph-enabled baseline. If a variant still OOMs, lower
+# MAX_NUM_SEQS or GPU_MEMORY_UTILIZATION for it.
+
+name: spec-decode
+description: Multi-Token Prediction speculative decoding, 3/4/5 tokens.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: ofat
+  axes:
+    - param: spec_tokens
+      abbrev: mtp
+      note: num_speculative_tokens for the native MTP head
+      # Deliberately space-free JSON: harmless now that the Deployment splits
+      # EXTRA_ARGS with `eval set --`, but it keeps the flag readable in logs.
+      extra_args: >-
+        --speculative-config={{"method":"{spec_decode_method}","num_speculative_tokens":{value}}}
+        --max-cudagraph-capture-size=128
+      values: ["3", "4", "5"]

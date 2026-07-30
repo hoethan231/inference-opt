@@ -1,0 +1,57 @@
+# =============================================================================
+# Cluster wiring: the names of the objects `./bench` talks to.
+#
+# Everything here is deliberately in one file so no Kubernetes name is buried
+# in Python. Change a name here and the whole tool follows.
+# =============================================================================
+
+namespace: vllm-inf
+
+# The engine Deployment + Service that `./bench run` re-applies and restarts
+# for every config (the "update the config, refresh the server" loop).
+deployment: vllm-server
+service: vllm-svc
+app_label: vllm
+
+# ConfigMap the Deployment reads its vLLM flags from. Rendered fresh per run.
+params_configmap: vllm-params
+
+# ConfigMap the benchmark Jobs mount their GuideLLM scenarios from.
+workloads_configmap: bench-workloads
+
+# Secret holding HF_TOKEN (created from $HF_TOKEN on first deploy).
+hf_secret: hf-token-secret
+
+# This repo's own results volume. Benchmark Jobs write here; `bench pull`
+# copies files off it. Deliberately NOT the shared guidellm-results-pvc, so it
+# can't fill up from — or be cleared alongside — other work on this cluster.
+results_pvc: vllm-sweep-results-pvc
+
+# Where the Jobs mount the results volume, and where the engine mounts weights.
+results_mount: /app/results
+model_mount: /models
+
+# Other engines on this single-GPU cluster that must be scaled to 0 before we
+# can deploy. Any *other* GPU-requesting pod is detected dynamically and waited
+# on instead (see `bench run --gpu-wait-timeout`).
+gpu_rivals:
+  - kind: deployment
+    name: sglang-nemotron
+  - kind: statefulset
+    name: vllm-nemotron
+
+images:
+  # Default engine image. A model file can pin its own with `image:`.
+  vllm: vllm/vllm-openai:v0.26.0
+  guidellm: ghcr.io/vllm-project/guidellm:v0.7.0
+  # Used for the weight-cache probe and the results reader/cleaner pods.
+  utility: busybox:1.36
+
+timeouts:
+  # Server rollout. Long because a cold model load is slow; `bench run` aborts
+  # early anyway when it sees a crash or OOM, rather than waiting this out.
+  rollout_s: 3600
+  # Grace period for a benchmark pod to start before we stop waiting for logs.
+  job_start_s: 300
+  probe_s: 600
+  preseed_s: 10800

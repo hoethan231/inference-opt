@@ -1,0 +1,1 @@
+[1;31mxx [0m Secret hf-token-secret missing and $HF_TOKEN not set. Run: export HF_TOKEN=hf_xxx

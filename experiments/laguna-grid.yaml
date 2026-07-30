@@ -1,0 +1,22 @@
+# The same scheduler grid, against Laguna instead of Nemotron.
+#
+# Note what isn't here: no MODEL_NAME, no tool-call or reasoning parser, no HF
+# transfer flags, no context-length ceiling. All of that belongs to the model and
+# lives in models/laguna-s-2.1.yaml, so this file is only the search.
+#
+#   ./bench run laguna-grid
+#   ./bench report laguna-grid
+#   ./bench report --all            # both models side by side, labelled by model
+
+name: laguna-grid
+description: Scheduler grid for Laguna S 2.1.
+model: laguna-s-2.1
+workloads: [rate, concurrent]
+
+strategy:
+  kind: grid
+  axes:
+    - key: MAX_NUM_SEQS
+      values: ["64", "128", "256"]
+    - key: MAX_NUM_BATCHED_TOKENS
+      values: ["2048", "4096"]

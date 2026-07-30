@@ -1,0 +1,22 @@
+# Full-factorial grid over the two scheduler knobs that interact most.
+#
+# Where an OFAT sweep finds the best value of each knob independently, this
+# measures the joint combinations — so the top of its leaderboard is an observed
+# best config, not a best guess. Cost is the product of the axes, so add values
+# carefully: this is 2 x 2 = 4 configs, ~2h at both workloads.
+#
+#   ./bench run grid-scheduler --dry-run
+#   ./bench report grid-scheduler
+
+name: grid-scheduler
+description: Joint sweep of max-num-seqs against prefill chunk size.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: grid
+  axes:
+    - key: MAX_NUM_SEQS
+      values: ["128", "256"]
+    - key: MAX_NUM_BATCHED_TOKENS
+      values: ["2048", "4096"]

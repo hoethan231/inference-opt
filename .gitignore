@@ -1,7 +1,15 @@
 sample/
-results/*
 **/__pycache__/**
-config/generated/
-sweep/logs/
-sweep/manifest.jsonl
-sweep/grid_manifest.jsonl
+.venv/
+
+# Measurements: gigabytes of GuideLLM JSON/HTML per run, plus the metrics cache.
+# The index is the part worth keeping — it is the record of what was run.
+runs/*
+!runs/index.jsonl
+
+# Regenerated from the index by `./bench report`.
+reports/
+
+# Pre-refactor artefacts, kept locally for reference (1.2G of old result files).
+archive/legacy-outputs/
+archive/plots/

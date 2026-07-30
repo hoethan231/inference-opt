@@ -1,43 +1,57 @@
 # =============================================================================
 # vLLM benchmarking server (Deployment) + in-cluster Service.
+#
+# Reads every flag from the `vllm-params` ConfigMap, so re-tuning never touches
+# this file: `./bench` renders a fresh ConfigMap per run and restarts the pod.
+# The double-underscore names below are substituted from cluster/cluster.yaml and
+# the model registry; run `bench render <experiment>` to see the result.
+#
+# strategy: Recreate — there is one GPU, and the weights PVC is ReadWriteOnce,
+# so the old pod must be gone before the new one starts or the new pod waits
+# forever for a GPU the old one still holds.
 # =============================================================================
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-server
-  namespace: vllm-inf
+  name: __DEPLOYMENT__
+  namespace: __NAMESPACE__
   labels:
-    app: vllm
+    app: __APP_LABEL__
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: vllm
+      app: __APP_LABEL__
   template:
     metadata:
       labels:
-        app: vllm
+        app: __APP_LABEL__
     spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: vllm
-          image: vllm/vllm-openai:v0.26.0
+          image: __VLLM_IMAGE__
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
-                name: vllm-params
+                name: __PARAMS_CONFIGMAP__
           env:
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hf-token-secret
+                  name: __HF_SECRET__
                   key: HF_TOKEN
           command: ["/bin/sh", "-c"]
           args:
+            # `eval set --` splits EXTRA_ARGS into arguments while respecting
+            # quotes, so a flag whose value contains spaces (e.g.
+            # --speculative-config='{"method": "x"}') survives intact. Plain
+            # unquoted $EXTRA_ARGS used to word-split such values into garbage.
             - >
+              eval "set -- $EXTRA_ARGS" &&
               exec python3 -m vllm.entrypoints.openai.api_server
               --model "$MODEL_NAME"
               --served-model-name "$SERVED_MODEL_NAME"
@@ -50,7 +64,7 @@ spec:
               --max-num-seqs "$MAX_NUM_SEQS"
               --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
               --block-size "$BLOCK_SIZE"
-              $EXTRA_ARGS
+              "$@"
           ports:
             - name: http
               containerPort: 8000
@@ -65,7 +79,7 @@ spec:
               memory: 40Gi
           volumeMounts:
             - name: model-cache
-              mountPath: /models
+              mountPath: __MODEL_MOUNT__
             - name: dshm
               mountPath: /dev/shm
           startupProbe:
@@ -89,7 +103,7 @@ spec:
       volumes:
         - name: model-cache
           persistentVolumeClaim:
-            claimName: nemotron-model-cache
+            claimName: __MODEL_CACHE_PVC__
         - name: dshm
           emptyDir:
             medium: Memory
@@ -98,14 +112,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: vllm-svc
-  namespace: vllm-inf
+  name: __SERVICE__
+  namespace: __NAMESPACE__
   labels:
-    app: vllm
+    app: __APP_LABEL__
 spec:
   type: ClusterIP
   selector:
-    app: vllm
+    app: __APP_LABEL__
   ports:
     - name: http
       port: 8000

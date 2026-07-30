@@ -1,0 +1,1180 @@
+[1;34m==>[0m applying params ConfigMap (/home/ethan.ho/code/inference-optimization/config/generated/vllm-params.baseline.yaml)
+[1;34m==>[0m applying scenarios ConfigMap (from scenarios/*.json)
+[1;34m==>[0m ensuring our own results PVC exists (vllm-sweep-results-pvc)
+[1;34m==>[0m freeing GPU (scaling down any other engine holding it)
+[1;34m==>[0m applying Deployment + Service
+[1;34m==>[0m restarting server to pick up new params
+[1;34m==>[0m waiting for vllm-server to become Ready (model load can take minutes)...
+Waiting for deployment "vllm-server" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "vllm-server" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "vllm-server" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "vllm-server" rollout to finish: 0 of 1 updated replicas are available...
+deployment "vllm-server" successfully rolled out
+[1;34m==>[0m vllm-server is READY.
+[1;34m==>[0m applying params ConfigMap (/home/ethan.ho/code/inference-optimization/config/generated/vllm-params.baseline.yaml)
+[1;34m==>[0m applying scenarios ConfigMap (from scenarios/*.json)
+[1;34m==>[0m benchmark tag = baseline
+[1;34m==>[0m running 'rate' benchmark  (job: vllm-rate-baseline)
+Running GuideLLM RATE test against http://vllm-svc.vllm-inf.svc.cluster.local:8000
+⚠ The following environment variables are set but not recognized by GuideLLM. 
+Please verify that the benchmark is configured correctly.
+  GUIDELLM_OUTPUT_DIR                                                           
+✔ OpenAIHTTPBackend backend validated with model nemotron-3-super-120b
+  {'kind': 'openai_http', 'target':                                             
+  'http://vllm-svc.vllm-inf.svc.cluster.local:8000', 'model':                   
+  'nemotron-3-super-120b', 'request_format': '/v1/chat/completions', 'api_key': 
+  None, 'api_routes': {'/health': 'health', '/v1/models': 'v1/models',          
+  '/v1/completions': 'v1/completions', '/v1/chat/completions':                  
+  'v1/chat/completions', '/v1/embeddings': 'v1/embeddings', '/v1/responses':    
+  'v1/responses', '/v1/audio/transcriptions': 'v1/audio/transcriptions',        
+  '/v1/audio/translations': 'v1/audio/translations', '/pooling': 'pooling'},    
+  'timeout': None, 'timeout_connect': 5.0, 'http2': True, 'follow_redirects':   
+  True, 'verify': False, 'validate_backend': True, 'stream': True, 'extras':    
+  {'method': None, 'stream': None, 'headers': None, 'params': None, 'body':     
+  {'temperature': 0.0}, 'files': None}, 'max_tokens': None, 'server_history':   
+  False, 'tool_call_missing_behavior': 'ignore_continue', 'multiturn_reasoning':
+  True}                                                                         
+✔ Tokenizer resolved, Using tokenizer 
+'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4' from arguments
+  {'kind': 'huggingface_auto', 'model':                                         
+  'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4', 'load_kwargs':              
+  {'trust_remote_code': True}}                                                  
+A new version of the following files was downloaded from https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4:
+- configuration_nemotron_h.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+✔ 1 datasets resolved
+  [{'kind': 'synthetic_text', 'load_kwargs': {}, 'prompt_tokens': 512,          
+  'prompt_tokens_stdev': 2048, 'prompt_tokens_min': 32, 'prompt_tokens_max':    
+  8192, 'output_tokens': 512, 'output_tokens_stdev': 1536, 'output_tokens_min': 
+  32, 'output_tokens_max': 4096, 'turns': 20, 'tool_call_turns': [0, 1, 2, 3, 4,
+  5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 'tools': None, 'tool_response_tokens':    
+  1024, 'tool_response_tokens_stdev': 2048, 'tool_response_tokens_min': 32,     
+  'tool_response_tokens_max': 8192, 'prefix_buckets': [{'bucket_weight': 70,    
+  'prefix_count': 8, 'prefix_tokens': 20480}, {'bucket_weight': 30,             
+  'prefix_count': 4, 'prefix_tokens': 36864}]}]                                 
+✔ 2 preprocessors resolved
+  [{'kind': 'generative_column_mapper', 'column_mappings': None}, {'kind':      
+  'encode_media', 'audio_kwargs': {}, 'image_kwargs': {}, 'video_kwargs': {}}]  
+✔ Finalizer resolved
+  {'kind': 'generative'}                                                        
+✔ Request loader resolved with inf unique requests
+  {'kind': 'pytorch', 'samples': -1, 'shuffle': False, 'num_workers': 1}        
+✔ AsyncProfile profile resolved
+  {'kind': 'poisson', 'rampup_duration': 30.0, 'warmup': {'percent': None,      
+  'value': 30.0, 'mode': 'prefer_duration'}, 'cooldown': {'percent': None,      
+  'value': None, 'mode': 'prefer_duration'}, 'rate': [20.0], 'max_concurrency': 
+  256}                                                                          
+✔ Output formats resolved
+  [{'kind': 'console'}, {'kind': 'json', 'path':                                
+  '/app/results/vllm-rate-baseline.json'}, {'kind': 'html', 'path':             
+  '/app/results/vllm-rate-baseline.html'}]                                      
+✔ Setup complete, starting benchmarks...
+
+
+
+
+╭─ Benchmarks ─────────────────────────────────────────────────────────────────╮
+│ [0… pois… (… Req:    0.0 req/s,    0.00s Lat,     0.0 Conc,       0 Comp,  … │
+│              Tok:    0.0 gen/s,    0.0 tot/s,   0.0ms TTFT,    0.0ms ITL,  … │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Generating... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ (1/1) [ 0:58:03 < 0:00:00 ]
+
+ℹ Run Summary Info
+|===========|==========|==========|=======|======|======|======|===========|=====|======|===========|=====|
+| Benchmark | Timings                               ||||| Input Tokens         ||| Output Tokens        |||
+| Strategy  | Start    | End      | Dur   | Warm | Cool | Comp | Inc       | Err | Comp | Inc       | Err |
+|           |          |          | Sec   | Sec  | Sec  | Tot  | Tot       | Tot | Tot  | Tot       | Tot |
+|-----------|----------|----------|-------|------|------|------|-----------|-----|------|-----------|-----|
+| poisson   | 08:10:05 | 08:14:36 | 271.0 | 29.0 | 0.0  | 0.0  | 1906543.0 | 0.0 | 0.0  | 2804589.0 | 0.0 |
+|===========|==========|==========|=======|======|======|======|===========|=====|======|===========|=====|
+
+
+ℹ Text Metrics Statistics (Completed Requests)
+|===========|=======|======|======|======|=======|======|======|======|=======|======|======|======|
+| Benchmark | Input Tokens            |||| Input Words             |||| Input Characters        ||||
+| Strategy  | Per Request || Per Second || Per Request || Per Second || Per Request || Per Second ||
+|           | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean |
+|-----------|-------|------|------|------|-------|------|------|------|-------|------|------|------|
+| poisson   | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  |
+|===========|=======|======|======|======|=======|======|======|======|=======|======|======|======|
+| Benchmark | Output Tokens           |||| Output Words            |||| Output Characters       ||||
+| Strategy  | Per Request || Per Second || Per Request || Per Second || Per Request || Per Second ||
+|           | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean |
+|-----------|-------|------|------|------|-------|------|------|------|-------|------|------|------|
+| poisson   | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  |
+|===========|=======|======|======|======|=======|======|======|======|=======|======|======|======|
+
+
+ℹ Tool Call Metrics Statistics (Completed Requests)
+|===========|=======|======|======|======|=======|======|======|======|
+| Benchmark | Output Mixed Tokens     |||| Output Count            ||||
+| Strategy  | Per Request || Per Second || Per Request || Per Second ||
+|           | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean |
+|-----------|-------|------|------|------|-------|------|------|------|
+| poisson   | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  |
+|===========|=======|======|======|======|=======|======|======|======|
+
+
+ℹ Request Token Statistics (Completed Requests)
+|===========|======|=====|======|======|======|=====|=======|======|=========|========|
+| Benchmark | Input Tok || Output Tok || Total Tok || Stream Iter || Output Tok      ||
+| Strategy  | Per Req   || Per Req    || Per Req   || Per Req     || Per Stream Iter ||
+|           | Mdn  | p95 | Mdn  | p95  | Mdn  | p95 | Mdn   | p95  | Mdn     | p95    |
+|-----------|------|-----|------|------|------|-----|-------|------|---------|--------|
+| poisson   | 0.0  | 0.0 | 0.0  | 0.0  | 0.0  | 0.0 | 0.0   | 0.0  | 0.0     | 0.0    |
+|===========|======|=====|======|======|======|=====|=======|======|=========|========|
+
+
+ℹ Request Latency Statistics (Completed Requests)
+|===========|=========|========|=====|=====|=====|=====|=====|=====|=====|=====|
+| Benchmark | Request Latency || TTFT     || TTFOT    || ITL      || TPOT     ||
+| Strategy  | Sec             || ms       || ms       || ms       || ms       ||
+|           | Mdn     | p95    | Mdn | p95 | Mdn | p95 | Mdn | p95 | Mdn | p95 |
+|-----------|---------|--------|-----|-----|-----|-----|-----|-----|-----|-----|
+| poisson   | 0.0     | 0.0    | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+|===========|=========|========|=====|=====|=====|=====|=====|=====|=====|=====|
+
+
+ℹ Server Throughput Statistics (All Requests)
+|===========|=======|=======|=========|==============|===============|==============|
+| Benchmark | Requests              ||| Input Tokens | Output Tokens | Total Tokens |
+| Strategy  | Concurrency  || Per Sec | Per Sec      | Per Sec       | Per Sec      |
+|           | Mdn   | Mean  | Mean                                               ||||
+|-----------|-------|-------|---------|--------------|---------------|--------------|
+| poisson   | 256.0 | 252.1 | 0.0     | 548.8        | 807.3         | 1356.0       |
+|===========|=======|=======|=========|==============|===============|==============|
+
+
+ℹ Run Summary Info
+|===========|==========|==========|=======|======|======|======|===========|=====|======|===========|=====|
+| Benchmark | Timings                               ||||| Input Tokens         ||| Output Tokens        |||
+| Strategy  | Start    | End      | Dur   | Warm | Cool | Comp | Inc       | Err | Comp | Inc       | Err |
+|           |          |          | Sec   | Sec  | Sec  | Tot  | Tot       | Tot | Tot  | Tot       | Tot |
+|-----------|----------|----------|-------|------|------|------|-----------|-----|------|-----------|-----|
+| poisson   | 08:10:05 | 08:14:36 | 271.0 | 29.0 | 0.0  | 0.0  | 1906543.0 | 0.0 | 0.0  | 2804589.0 | 0.0 |
+|===========|==========|==========|=======|======|======|======|===========|=====|======|===========|=====|
+
+
+ℹ Text Metrics Statistics (Completed Requests)
+|===========|=======|======|======|======|=======|======|======|======|=======|======|======|======|
+| Benchmark | Input Tokens            |||| Input Words             |||| Input Characters        ||||
+| Strategy  | Per Request || Per Second || Per Request || Per Second || Per Request || Per Second ||
+|           | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean |
+|-----------|-------|------|------|------|-------|------|------|------|-------|------|------|------|
+| poisson   | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  |
+|===========|=======|======|======|======|=======|======|======|======|=======|======|======|======|
+| Benchmark | Output Tokens           |||| Output Words            |||| Output Characters       ||||
+| Strategy  | Per Request || Per Second || Per Request || Per Second || Per Request || Per Second ||
+|           | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean |
+|-----------|-------|------|------|------|-------|------|------|------|-------|------|------|------|
+| poisson   | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  |
+|===========|=======|======|======|======|=======|======|======|======|=======|======|======|======|
+
+
+ℹ Tool Call Metrics Statistics (Completed Requests)
+|===========|=======|======|======|======|=======|======|======|======|
+| Benchmark | Output Mixed Tokens     |||| Output Count            ||||
+| Strategy  | Per Request || Per Second || Per Request || Per Second ||
+|           | Mdn   | p95  | Mdn  | Mean | Mdn   | p95  | Mdn  | Mean |
+|-----------|-------|------|------|------|-------|------|------|------|
+| poisson   | 0.0   | 0.0  | 0.0  | 0.0  | 0.0   | 0.0  | 0.0  | 0.0  |
+|===========|=======|======|======|======|=======|======|======|======|
+
+
+ℹ Request Token Statistics (Completed Requests)
+|===========|======|=====|======|======|======|=====|=======|======|=========|========|
+| Benchmark | Input Tok || Output Tok || Total Tok || Stream Iter || Output Tok      ||
+| Strategy  | Per Req   || Per Req    || Per Req   || Per Req     || Per Stream Iter ||
+|           | Mdn  | p95 | Mdn  | p95  | Mdn  | p95 | Mdn   | p95  | Mdn     | p95    |
+|-----------|------|-----|------|------|------|-----|-------|------|---------|--------|
+| poisson   | 0.0  | 0.0 | 0.0  | 0.0  | 0.0  | 0.0 | 0.0   | 0.0  | 0.0     | 0.0    |
+|===========|======|=====|======|======|======|=====|=======|======|=========|========|
+
+
+ℹ Request Latency Statistics (Completed Requests)
+|===========|=========|========|=====|=====|=====|=====|=====|=====|=====|=====|
+| Benchmark | Request Latency || TTFT     || TTFOT    || ITL      || TPOT     ||
+| Strategy  | Sec             || ms       || ms       || ms       || ms       ||
+|           | Mdn     | p95    | Mdn | p95 | Mdn | p95 | Mdn | p95 | Mdn | p95 |
+|-----------|---------|--------|-----|-----|-----|-----|-----|-----|-----|-----|
+| poisson   | 0.0     | 0.0    | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+|===========|=========|========|=====|=====|=====|=====|=====|=====|=====|=====|
+
+
+ℹ Server Throughput Statistics (All Requests)
+|===========|=======|=======|=========|==============|===============|==============|
+| Benchmark | Requests              ||| Input Tokens | Output Tokens | Total Tokens |
+| Strategy  | Concurrency  || Per Sec | Per Sec      | Per Sec       | Per Sec      |
+|           | Mdn   | Mean  | Mean                                               ||||
+|-----------|-------|-------|---------|--------------|---------------|--------------|
+| poisson   | 256.0 | 252.1 | 0.0     | 548.8        | 807.3         | 1356.0       |
+|===========|=======|=======|=========|==============|===============|==============|
+
+
+
+✔ Benchmarking complete, generated 1 benchmark(s)
+…   console : printed to console
+…   json    : /app/results/vllm-rate-baseline.json
+…   html    : /app/results/vllm-rate-baseline.html
+[1;34m==>[0m   rate -> COMPLETE  (results file: vllm-rate-baseline.json)
+[1;34m==>[0m running 'concurrent' benchmark  (job: vllm-users-baseline)
+Running GuideLLM CONCURRENT-USERS test against http://vllm-svc.vllm-inf.svc.cluster.local:8000
+⚠ The following environment variables are set but not recognized by GuideLLM. 
+Please verify that the benchmark is configured correctly.
+  GUIDELLM_OUTPUT_DIR                                                           
+✔ OpenAIHTTPBackend backend validated with model nemotron-3-super-120b
+  {'kind': 'openai_http', 'target':                                             
+  'http://vllm-svc.vllm-inf.svc.cluster.local:8000', 'model':                   
+  'nemotron-3-super-120b', 'request_format': '/v1/chat/completions', 'api_key': 
+  None, 'api_routes': {'/health': 'health', '/v1/models': 'v1/models',          
+  '/v1/completions': 'v1/completions', '/v1/chat/completions':                  
+  'v1/chat/completions', '/v1/embeddings': 'v1/embeddings', '/v1/responses':    
+  'v1/responses', '/v1/audio/transcriptions': 'v1/audio/transcriptions',        
+  '/v1/audio/translations': 'v1/audio/translations', '/pooling': 'pooling'},    
+  'timeout': None, 'timeout_connect': 5.0, 'http2': True, 'follow_redirects':   
+  True, 'verify': False, 'validate_backend': True, 'stream': True, 'extras':    
+  {'method': None, 'stream': None, 'headers': None, 'params': None, 'body':     
+  {'temperature': 0.0}, 'files': None}, 'max_tokens': None, 'server_history':   
+  False, 'tool_call_missing_behavior': 'ignore_continue', 'multiturn_reasoning':
+  True}                                                                         
+✔ Tokenizer resolved, Using tokenizer 
+'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4' from arguments
+  {'kind': 'huggingface_auto', 'model':                                         
+  'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4', 'load_kwargs':              
+  {'trust_remote_code': True}}                                                  
+A new version of the following files was downloaded from https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4:
+- configuration_nemotron_h.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+✔ 1 datasets resolved
+  [{'kind': 'synthetic_text', 'load_kwargs': {}, 'prompt_tokens': 512,          
+  'prompt_tokens_stdev': 2048, 'prompt_tokens_min': 32, 'prompt_tokens_max':    
+  8192, 'output_tokens': 512, 'output_tokens_stdev': 1536, 'output_tokens_min': 
+  32, 'output_tokens_max': 4096, 'turns': 20, 'tool_call_turns': [0, 1, 2, 3, 4,
+  5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 'tools': None, 'tool_response_tokens':    
+  1024, 'tool_response_tokens_stdev': 2048, 'tool_response_tokens_min': 32,     
+  'tool_response_tokens_max': 8192, 'prefix_buckets': [{'bucket_weight': 70,    
+  'prefix_count': 8, 'prefix_tokens': 20480}, {'bucket_weight': 30,             
+  'prefix_count': 4, 'prefix_tokens': 36864}]}]                                 
+✔ 2 preprocessors resolved
+  [{'kind': 'generative_column_mapper', 'column_mappings': None}, {'kind':      
+  'encode_media', 'audio_kwargs': {}, 'image_kwargs': {}, 'video_kwargs': {}}]  
+✔ Finalizer resolved
+  {'kind': 'generative'}                                                        
+✔ Request loader resolved with inf unique requests
+  {'kind': 'pytorch', 'samples': -1, 'shuffle': False, 'num_workers': 1}        
+✔ ConcurrentProfile profile resolved
+  {'kind': 'concurrent', 'rampup_duration': 0.0, 'warmup': {'percent': None,    
+  'value': 30.0, 'mode': 'prefer_duration'}, 'cooldown': {'percent': None,      
+  'value': None, 'mode': 'prefer_duration'}, 'streams': [8, 16, 32, 64]}        
+✔ Output formats resolved
+  [{'kind': 'console'}, {'kind': 'json', 'path':                                
+  '/app/results/vllm-users-baseline.json'}, {'kind': 'html', 'path':            
+  '/app/results/vllm-users-baseline.html'}]                                     
+✔ Setup complete, starting benchmarks...
+
+
+
+Process ForkProcess-25:
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 322, in validate
+    response = await self._async_client.request(**validate_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+Process ForkProcess-26:
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 246, in _process_requests
+    await self._processing_startup()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 268, in _processing_startup
+    await self.backend.validate()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 325, in validate
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from exc
+RuntimeError: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 0 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 0 encountered an error: Worker process 0 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+Process ForkProcess-32:
+Traceback (most recent call last):
+Process ForkProcess-31:
+Process ForkProcess-27:
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 232, in _stop_monitor
+    raise RuntimeError(
+        f"Worker process {self.messaging.worker_index} received error signal."
+    )
+RuntimeError: Worker process 6 received error signal.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+Process ForkProcess-29:
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 6 encountered an error: Worker process 6 received error signal.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+Process ForkProcess-30:
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 6 encountered an error: Worker process 6 encountered an error: Worker process 6 received error signal.
+Process ForkProcess-28:
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 232, in _stop_monitor
+    raise RuntimeError(
+        f"Worker process {self.messaging.worker_index} received error signal."
+    )
+RuntimeError: Worker process 7 received error signal.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 322, in validate
+    response = await self._async_client.request(**validate_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Worker process 7 encountered an error: Worker process 7 received error signal.
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 246, in _process_requests
+    await self._processing_startup()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 268, in _processing_startup
+    await self.backend.validate()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 325, in validate
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from exc
+RuntimeError: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 1 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 7 encountered an error: Worker process 7 encountered an error: Worker process 7 received error signal.
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 1 encountered an error: Worker process 1 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: All connection attempts failed
+httpcore.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 322, in validate
+    response = await self._async_client.request(**validate_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: All connection attempts failed
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 246, in _process_requests
+    await self._processing_startup()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 268, in _processing_startup
+    await self.backend.validate()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 325, in validate
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from exc
+RuntimeError: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 2 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 322, in validate
+    response = await self._async_client.request(**validate_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 246, in _process_requests
+    await self._processing_startup()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 268, in _processing_startup
+    await self.backend.validate()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 325, in validate
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from exc
+RuntimeError: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 2 encountered an error: Worker process 2 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 322, in validate
+    response = await self._async_client.request(**validate_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 246, in _process_requests
+    await self._processing_startup()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 268, in _processing_startup
+    await self.backend.validate()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 325, in validate
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from exc
+RuntimeError: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 3 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 3 encountered an error: Worker process 3 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 5 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 5 encountered an error: Worker process 5 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+Process ForkProcess-34:
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 232, in _stop_monitor
+    raise RuntimeError(
+        f"Worker process {self.messaging.worker_index} received error signal."
+    )
+RuntimeError: Worker process 9 received error signal.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 322, in validate
+    response = await self._async_client.request(**validate_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 9 encountered an error: Worker process 9 received error signal.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 9 encountered an error: Worker process 9 encountered an error: Worker process 9 received error signal.
+httpx.ConnectError: All connection attempts failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 246, in _process_requests
+    await self._processing_startup()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 268, in _processing_startup
+    await self.backend.validate()
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/backends/openai/http.py", line 325, in validate
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from exc
+RuntimeError: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 4 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+Process ForkProcess-33:
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 4 encountered an error: Worker process 4 encountered an error: Backend validation request failed. Could not connect to the server or validate the backend configuration.
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 232, in _stop_monitor
+    raise RuntimeError(
+        f"Worker process {self.messaging.worker_index} received error signal."
+    )
+RuntimeError: Worker process 8 received error signal.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 157, in run
+    asyncio.run(self.run_async())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 208, in run_async
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from task_err
+RuntimeError: Worker process 8 encountered an error: Worker process 8 received error signal.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib64/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.13/site-packages/guidellm/scheduler/worker.py", line 160, in run
+    raise RuntimeError(
+    ...<2 lines>...
+    ) from err
+RuntimeError: Worker process 8 encountered an error: Worker process 8 encountered an error: Worker process 8 received error signal.
+[1;33m!! [0m   concurrent -> still running/unknown. Check: kubectl get job vllm-users-baseline -n vllm-inf
+[1;34m==>[0m pull results with: ./run.sh pull baseline

@@ -1,0 +1,9 @@
+[1;34m==>[0m applying params ConfigMap (/home/ethan.ho/code/inference-optimization/config/generated/vllm-params.max-num-seqs-64.yaml)
+[1;34m==>[0m applying scenarios ConfigMap (from scenarios/*.json)
+[1;34m==>[0m ensuring our own results PVC exists (vllm-sweep-results-pvc)
+[1;34m==>[0m freeing GPU (scaling down any other engine holding it)
+[1;34m==>[0m applying Deployment + Service
+[1;34m==>[0m restarting server to pick up new params
+[1;34m==>[0m waiting for vllm-server to become Ready (model load can take minutes)...
+Waiting for deployment "vllm-server" rollout to finish: 0 of 1 updated replicas are available...
+error: deployment "vllm-server" exceeded its progress deadline

@@ -1,0 +1,53 @@
+# One-factor-at-a-time sweep of the main engine knobs.
+#
+# Every run holds everything at the baseline and changes exactly ONE value, so
+# the cost is linear — sum(len(values) - 1) + 1 configs — instead of the
+# K^N of a full grid. Values equal to the baseline are skipped automatically,
+# since the baseline run already covers them.
+#
+# OFAT tells you each knob's best value *independently*; it does not prove that
+# combination is jointly optimal. Confirm a promising combination with a grid
+# experiment, or with `bench compare`.
+#
+#   ./bench run ofat-scheduler --dry-run
+#   ./bench run ofat-scheduler --only max_num_seqs
+#   ./bench report ofat-scheduler
+
+name: ofat-scheduler
+description: OFAT sweep of scheduler, memory and attention knobs.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: ofat
+  axes:
+    - key: KV_CACHE_DTYPE
+      note: KV-cache storage precision; fp8 roughly halves its size
+      values: ["auto", "fp8", "fp8_e4m3", "fp8_e5m2"]
+
+    - key: MAX_NUM_SEQS
+      note: max concurrent running sequences — the scheduler's bouncer
+      values: ["32", "64", "128", "256"]
+
+    - key: MAX_NUM_BATCHED_TOKENS
+      note: prefill chunk size — the scheduler's chewer
+      values: ["512", "1024", "2048", "4096", "8192"]
+
+    - key: VLLM_ATTENTION_BACKEND
+      param: attention_backend
+      note: >-
+        attention kernel; "" means vLLM auto-selects and is displayed as 'auto'.
+        XFORMERS is omitted: V0-only, unsupported on the V1 engine used here.
+      values: ["", "FLASHINFER", "TRITON_ATTN"]
+
+    - key: GPU_MEMORY_UTILIZATION
+      note: fraction of VRAM for weights + KV cache
+      values: ["0.80", "0.85", "0.9", "0.95"]
+
+    - key: BLOCK_SIZE
+      note: KV-cache block size in tokens
+      values: ["16", "32"]
+
+    - key: MAX_MODEL_LEN
+      note: context window; a smaller window frees KV-cache blocks
+      values: ["8192", "32768", "131072", "262144"]

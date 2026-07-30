@@ -1,0 +1,12 @@
+# A single run of the current defaults. The reference point everything else is
+# compared against, and the fastest way to check the cluster is healthy.
+#
+#   ./bench run baseline
+
+name: baseline
+description: Current default config, both workloads.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: single

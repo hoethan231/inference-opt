@@ -1,362 +1,328 @@
-# vLLM hyperparameter benchmarking
+# Inference optimization bench
 
-A minimal, edit-one-file workflow for sweeping vLLM serving hyperparameters on
-the cluster and benchmarking each config with GuideLLM.
-
-The loop is four steps:
-
-1. **Edit** `config/vllm-params.yaml` (change a hyperparameter).
-2. **Deploy** — applies the config and restarts the server with it.
-3. **Bench** — fires a load test at the server.
-4. **Pull** — copies the result files back to your machine.
+One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
+Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
+different sizes, so they share one command, one results store and one report.
 
 ```bash
-export HF_TOKEN=hf_xxx        # only needed the first time (creates the Secret)
+export HF_TOKEN=hf_xxx              # first time only; creates the Secret
 
-./run.sh deploy               # apply params + (re)start server, wait until Ready
-./run.sh bench both           # run the rate + concurrent-users benchmarks
-./run.sh pull                 # copy result JSON/HTML into ./results/
+./bench models                      # what can be run: models, workloads, experiments
+./bench run baseline                # deploy one config, benchmark it, record it
+./bench report baseline             # plots + leaderboard
 ```
 
-Or in one go: `./run.sh all both`.
+Everything else is a variation on that. `./bench` with no arguments lists the
+commands; `./bench <command> --help` explains one.
 
----
+## How a run works
+
+A run is the same four steps the old `run.sh` did, in a loop, per config:
+
+1. **Render** the `vllm-params` ConfigMap for this config and apply it.
+2. **Refresh** the server — the Deployment is `strategy: Recreate`, so the old
+   pod releases the GPU before the new one starts — then wait until it is Ready
+   and answering, and record what the engine actually did (KV-cache blocks,
+   resolved engine args, vLLM version).
+3. **Benchmark** it with each workload, as a Kubernetes Job.
+4. **Pull** the results off the PVC into `runs/<tag>/` and append one line to
+   `runs/index.jsonl`.
+
+Nothing about that loop is hidden: `./bench render <experiment>` prints the exact
+manifests a run would apply, and applies nothing.
+
+## Defining what to measure
+
+An experiment is one YAML file in `experiments/`. Its `strategy.kind` decides
+how many configs come out of it:
+
+| kind | configs | use it for |
+|---|---|---|
+| `single` | 1 | one config, e.g. a baseline or a candidate to confirm |
+| `ofat` | `sum(len(values) - 1) + 1` | finding each knob's best value on its own |
+| `grid` | product of the axes | proving a *combination*, once OFAT has narrowed it |
+
+An axis usually names a ConfigMap key:
+
+```yaml
+name: ofat-scheduler
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: ofat
+  axes:
+    - key: MAX_NUM_SEQS
+      note: max concurrent running sequences — the scheduler's bouncer
+      values: ["32", "64", "128", "256"]
+```
+
+...but a value can change several things at once, or append a flag instead of
+setting a key — which is how speculative decoding, kernel probes and anything
+else without its own ConfigMap key are expressed:
+
+```yaml
+    - param: spec_tokens
+      abbrev: mtp
+      extra_args: >-
+        --speculative-config={{"method":"{spec_decode_method}","num_speculative_tokens":{value}}}
+      values: ["3", "4", "5"]
+
+    - param: feature
+      values:
+        - label: cutlass-moe
+          params: {MAX_NUM_SEQS: "256"}
+          extra_args: --moe-backend=flashinfer_cutlass
+```
+
+`{spec_decode_method}` and `{hf_repo}` come from the model registry, so pointing
+the experiment at another model picks up that model's method rather than
+hardcoding one. `abbrev:` fixes how the axis appears in tags
+(`spec-decode-mtp-5`); without it a tag spells the axis out and only falls back
+to an abbreviation when it would otherwise exceed the Kubernetes name limit.
+The shipped experiments are `baseline`, `ofat-scheduler`,
+`grid-scheduler`, `spec-decode`, `feature-probes` and `laguna-grid`; each one's
+header comment explains what it is for.
+
+### Where a config's values come from
+
+Lowest precedence to highest:
+
+```
+cluster/params-base.yaml  <  models/<model>.yaml  <  experiments/<exp>.yaml  <  the axis value
+```
+
+Model identity (`MODEL_NAME`, `SERVED_MODEL_NAME`) is applied last and can't be
+set by an experiment, so an experiment can never quietly serve a different
+checkpoint than the one in its `model:` field.
+
+## Multiple models
+
+A model file owns everything model-specific — weights, cache volume, image, the
+parser flags its chat template needs, and defaults for knobs whose ceiling is
+model-dependent:
+
+```yaml
+name: nemotron-3-super-120b
+hf_repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+cache_pvc: nemotron-model-cache
+params:
+  MAX_MODEL_LEN: "262144"
+extra_args: [--trust-remote-code, --tool-call-parser=qwen3_coder]
+spec_decode_method: nemotron_h_mtp
+```
+
+Switching an experiment to another model is one line (`model: laguna-s-2.1`). If
+its weights aren't on the cache volume yet, `bench run` notices and pre-seeds the
+download first (a Job on whichever node has the GPU — no hostname is hardcoded).
+Reports label each series with its model when more than one is in view, so
+cross-model comparison happens at report time rather than needing its own mode.
+
+## Running
+
+```bash
+./bench run ofat-scheduler --dry-run          # the plan and the wall-clock estimate
+./bench run ofat-scheduler                    # all of it
+./bench run ofat-scheduler --only max_num_seqs  # one axis (matches tag, axis or value)
+./bench run ofat-scheduler --resume           # carry on, skipping what already succeeded
+./bench run baseline --workloads rate         # cheaper: one workload
+./bench run ofat-scheduler --suffix rerun2    # same sweep, tags suffixed, nothing overwritten
+```
+
+Safe to interrupt: every attempt is recorded, so `--resume` picks up exactly
+what is left. A config that fails is retried once with a fresh deploy — except
+when it failed because it cannot fit in memory, which retrying cannot fix.
+
+`--suffix rerun2` turns `max-num-seqs-256` into `max-num-seqs-256-rerun2`.
+Reports treat a suffix as a separate group and keep it out of the default view,
+because it is usually a different question (a different workload, or a rerun);
+`--suffix rerun2` plots that group, `--all-suffixes` plots everything together.
+
+## Reading the results
+
+```bash
+./bench runs                          # what has been measured, with tags
+./bench report ofat-scheduler         # per-axis figures + leaderboards
+./bench report ofat-scheduler --param max_num_seqs   # drill into one axis
+./bench report --all                  # everything, every model, one ranking
+./bench compare baseline spec-decode-mtp-5           # head-to-head
+```
+
+PNGs and the recommended config land in `reports/<experiment>/`; tables print to
+stdout. There are no CSVs and no aggregation step — the report reads the run
+store directly. Parsed metrics are cached per run (`runs/<tag>/summary.json`,
+fingerprinted by size and mtime), which is the difference between a report taking
+milliseconds and re-parsing gigabytes of GuideLLM JSON.
+
+Ranking is a composite score over TTFT, end-to-end latency and throughput, with
+two gates in front of it: a run that completed **no** requests can't be ranked at
+all, and one whose error rate is above 5% is disqualified — otherwise a config
+that failed most requests looks impressively fast on the survivors.
+
+The report also writes the winner back out as a runnable experiment, e.g.
+`reports/ofat-scheduler/recommended-ofat-scheduler.yaml`:
+
+```bash
+./bench run reports/ofat-scheduler/recommended-ofat-scheduler.yaml
+```
+
+For a grid that is just the winning config, which really was measured. For an
+OFAT sweep it is the per-axis winners combined — each chosen in isolation, so
+treat it as a hypothesis: run it, then
+`./bench compare baseline recommended-ofat-scheduler`.
+
+GuideLLM's own HTML report is pulled alongside the JSON in `runs/<tag>/` when you
+want the per-request detail behind a number.
+
+## Keeping the store honest
+
+```bash
+./bench doctor            # index vs. what's actually on disk
+./bench doctor --fix      # mark unusable runs failed, so --resume redoes them
+```
+
+`doctor` catches a run recorded as successful whose result file is missing,
+truncated, or contains zero successful requests. `runs/index.jsonl` is
+append-only — a record is never rewritten, so retries and a killed sweep's
+history both stay visible, and readers take the last entry per tag.
+
+## Cluster commands
+
+```bash
+./bench status            # server, benchmark jobs, recent runs
+./bench pull [tag]        # raw files off the results PVC
+./bench clean jobs        # delete finished benchmark Jobs
+./bench clean results     # wipe the results PVC (asks first; pull anything you want)
+./bench models --preseed laguna-s-2.1   # download weights to the cache volume
+```
+
+## Layout
+
+```
+bench                     # the entry point (a shim around `uv run`)
+benchlab/                 # the tool
+experiments/*.yaml        # what to measure
+models/*.yaml             # which model, and what it needs
+workloads/                # GuideLLM scenarios + index.yaml
+cluster/
+  cluster.yaml            # every Kubernetes object name, in one file
+  params-base.yaml        # engine defaults (lowest precedence)
+  deployments/            # vLLM Deployment + Service, results PVC
+  jobs/                   # benchmark Job, weight pre-seed Job
+runs/
+  index.jsonl             # append-only record of every attempt
+  <tag>/                  # result JSON + HTML, engine facts, logs
+reports/                  # PNGs, and auto-written recommended configs
+archive/                  # the pre-refactor tools, configs and outputs
+```
+
+`cluster/cluster.yaml` holds every Kubernetes name the tool uses, deliberately
+in one place so none of them is buried in Python. The manifests under `cluster/`
+are the same ones as before, with `__PLACEHOLDER__` fields the tool fills in per
+run.
 
 ## The 30-second Kubernetes primer
 
-Everything lives in the `vllm-inf` **namespace** (a folder that groups objects).
-You never talk to a machine directly; you declare **objects** and Kubernetes
-makes reality match them. The objects we use:
+Everything lives in the `vllm-inf` **namespace**. You never talk to a machine
+directly; you declare **objects** and Kubernetes makes reality match them.
 
-| Object | What it is | Our instance |
+| Object | What it is | Ours |
 |---|---|---|
-| **ConfigMap** | a bag of key/value settings injected into a pod as env vars | `vllm-params` (your knobs), `coding-agent-scenarios` (workloads) |
-| **Secret** | like a ConfigMap but for sensitive values | `hf-token-secret` (your HF token) |
-| **PVC** (PersistentVolumeClaim) | a network disk that outlives pods | `nemotron-model-cache` (weights), `vllm-sweep-results-pvc` (results, this repo's own) |
-| **Deployment** | keeps N copies of a pod running; restarts them on change | `vllm-server` (the vLLM engine) |
-| **Service** | a stable DNS name/IP in front of pods | `vllm-svc` |
-| **Job** | a pod that runs once to completion | the GuideLLM benchmark runs |
+| **ConfigMap** | key/value settings injected as env vars | `vllm-params` (the knobs), `bench-workloads` (scenarios) |
+| **Secret** | a ConfigMap for sensitive values | `hf-token-secret` |
+| **PVC** | a network disk that outlives pods | `nemotron-model-cache` (weights), `vllm-sweep-results-pvc` (results) |
+| **Deployment** | keeps N copies of a pod running | `vllm-server` |
+| **Service** | a stable DNS name in front of pods | `vllm-svc` |
+| **Job** | a pod that runs once to completion | each benchmark, each pre-seed |
 
-**Why a pod can't see your files:** a pod is an isolated container. It only
-gets settings you inject (ConfigMap/Secret env vars) and disks you mount (PVCs).
-That's why the token goes in a Secret and the weights live on a PVC.
+A pod is isolated: it only sees settings you inject and disks you mount. That is
+why the token is a Secret and the weights are on a PVC.
 
-**The single-GPU rule:** there is exactly **one** GPU in the cluster, and the
-weights PVC is `ReadWriteOnce` (one pod at a time). So only one engine pod can
-run at once. The Deployment uses `strategy: Recreate`, which tears the old pod
-down *before* starting the new one — otherwise the new pod would wait forever
-for a GPU the old pod still holds. `./run.sh deploy` also scales down the older
-sample engines (`sglang-nemotron`, `vllm-nemotron`) as a safety net.
+**The single-GPU rule.** There is one GPU, and the weights PVC is
+`ReadWriteOnce`, so exactly one engine pod can run at a time. `bench run` scales
+down the known rival engines listed in `cluster.yaml`, and if some *other*
+GPU-requesting pod is running it waits for it (`--gpu-wait-timeout`) rather than
+deadlocking against it.
 
----
+**Why the results PVC is separate.** `vllm-sweep-results-pvc` belongs to this
+repo, so it can't fill up from — or be cleared alongside — other benchmarking
+work on the shared cluster. Never point these Jobs at the shared
+`guidellm-results-pvc`.
 
-## Files
+## The knobs
 
-```
-config/vllm-params.yaml     # <- EDIT THIS to tune. One key per hyperparameter.
-deployments/vllm.yaml       # vLLM Deployment (reads the ConfigMap) + Service
-jobs/vllm_rate.yaml         # benchmark Job: Poisson 20 req/s
-jobs/vllm_user.yaml         # benchmark Job: 8/16/32/64 concurrent users
-scenarios/*.json            # the GuideLLM workload definitions
-run.sh                      # the driver (deploy | bench | all | pull | status | clean)
-results/                    # local copies of pulled results (created by pull)
-```
+The Deployment turns ConfigMap keys into vLLM flags, so re-tuning never means
+editing the Deployment:
 
-## How tuning actually works
+| Key | vLLM flag |
+|---|---|
+| `MAX_MODEL_LEN` | `--max-model-len` — context window |
+| `MAX_NUM_SEQS` | `--max-num-seqs` — max concurrent running requests |
+| `MAX_NUM_BATCHED_TOKENS` | `--max-num-batched-tokens` — prefill chunk size |
+| `KV_CACHE_DTYPE` | `--kv-cache-dtype` — `fp8` roughly halves KV-cache size |
+| `GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization` |
+| `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` |
+| `BLOCK_SIZE` | `--block-size` |
+| `VLLM_ATTENTION_BACKEND` | `--attention-backend`; empty means auto-select. It is passed as a flag because vLLM ≥0.13 no longer reads it as an env var ([vllm-project/vllm#26315](https://github.com/vllm-project/vllm/pull/26315)) |
+| `EXTRA_ARGS` | appended verbatim — the escape hatch for everything else |
 
-`config/vllm-params.yaml` is a ConfigMap with one key per knob. The Deployment
-injects all keys as env vars and a tiny shell entrypoint expands them into vLLM
-flags, e.g. `MAX_NUM_SEQS: "128"` becomes `--max-num-seqs 128`. Because the
-flags come from the ConfigMap, **you never edit the Deployment to re-tune** —
-you edit the ConfigMap and run `./run.sh deploy`, which re-applies it and forces
-a fresh pod so the change takes effect.
+`EXTRA_ARGS` is composed from the `extra_args` lists (base, then model, then
+experiment, then axis) and never set directly, which is how configs used to drift
+apart. The entrypoint splits it with `eval set --`, so a flag whose value
+contains spaces or JSON survives.
 
-The knobs:
+## The workloads
 
-| Key | vLLM flag | Meaning |
+All of them hit `/v1/chat/completions` with synthetic coding-agent traffic (large
+shared prefixes, bursty prompt/output sizes, tool-heavy conversations). They
+differ in how load is applied — a workload's shape is read from the scenario's
+own `spec.profile.kind`, so adding one is just a `workloads/index.yaml` entry.
+
+| Name | Load | Time |
 |---|---|---|
-| `MAX_MODEL_LEN` | `--max-model-len` | context window (tokens) |
-| `MAX_NUM_SEQS` | `--max-num-seqs` | max concurrent running requests ("bouncer") |
-| `MAX_NUM_BATCHED_TOKENS` | `--max-num-batched-tokens` | prefill chunk size ("chewer") |
-| `KV_CACHE_DTYPE` | `--kv-cache-dtype` | KV-cache precision (`fp8` halves its size) |
-| `GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization` | fraction of VRAM to use |
-| `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` | GPUs per replica (1 here) |
-| `BLOCK_SIZE` | `--block-size` | KV-cache block size (tokens/block) |
-| `VLLM_ATTENTION_BACKEND` | `--attention-backend` *(turned into the flag by the entrypoint — vLLM ≥0.13 no longer reads this as an env var directly, see [vllm-project/vllm#26315](https://github.com/vllm-project/vllm/pull/26315))* | attention kernel backend; empty = auto-select |
-| `EXTRA_ARGS` | *(appended verbatim)* | any other flag, e.g. `--enforce-eager`, `--speculative-config '...'` |
+| `rate` | steady 20 req/s Poisson stream — behavior at fixed offered load | ~6 min |
+| `concurrent` | 8/16/32/64 busy users — how latency and throughput scale | ~20 min |
+| `decode-heavy` | short prompts, long generations — isolates decode from prefill | ~6 min |
 
-Anything not promoted to its own key goes in `EXTRA_ARGS` — the escape hatch for
-the long tail of vLLM options, no Deployment edit required.
+## Requirements
 
-## The two benchmarks
+`./bench` is a shim: it runs the tool through [uv](https://docs.astral.sh/uv/),
+which fetches Python 3.12 and the pinned dependencies on first use. You need
+`uv` and a working `kubectl` context. Nothing else, and no virtualenv to
+activate.
 
-Both hit `/v1/chat/completions` with the same synthetic coding-agent data
-(large shared prefixes, bursty prompt/output sizes, 20-turn tool-heavy
-conversations). They differ only in how load is applied:
+On the cluster side: one GPU node (RTX PRO 6000, ~96 GB), the default
+`nutanix-volume` StorageClass, and a model cache PVC. `HF_TOKEN` in the
+environment on first run creates the Secret; the results PVC is created if it is
+missing.
 
-- **rate** (`jobs/vllm_rate.yaml`) — a steady 20 req/s Poisson stream; measures
-  behavior under fixed offered load / saturation. ~5–6 min.
-- **concurrent** (`jobs/vllm_user.yaml`) — fixed busy users at 8, 16, 32, 64
-  streams; measures how latency/throughput scale with concurrency. ~20 min.
+## What happened to the old scripts
 
-Each run is tagged (default: a timestamp) so result files never overwrite each
-other: `vllm-rate-<tag>.json` / `vllm-users-<tag>.json` on the results PVC.
-Pass your own tag to line runs up with a config: `./run.sh bench both ms128-pf2048`.
-
-## Commands
+`run.sh`, `sweep/run_sweep.py`, `sweep/run_grid.py`, `sweep/plot_results.py`,
+`sweep/plot_grid.py`, `sweep/compare_tags.py`, `sweep/load_results.py`,
+`sweep/check_results.py` and `sweep/grid.py` are all folded into `./bench` and
+parked in `archive/legacy-tools/` for reference. The old manifests and result
+files were imported (`./bench migrate`, already run), so pre-refactor runs are in
+the store under `legacy-*` experiment names and still comparable:
 
 ```bash
-./run.sh deploy                 # apply params + restart server, wait until Ready
-./run.sh bench rate             # just the rate test
-./run.sh bench concurrent tagA  # just the concurrent test, custom tag
-./run.sh bench both             # both tests
-./run.sh all both               # deploy then bench both
-./run.sh pull [tag]             # copy results -> ./results/
-./run.sh status                 # server + benchmark job status
-./run.sh clean                  # delete this repo's benchmark jobs
+./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95
 ```
 
-## Prerequisites (already satisfied on this cluster)
-
-- 1 GPU node (`nvidia.com/gpu: 1`, RTX PRO 6000 ~96 GB).
-- Default StorageClass `nutanix-volume` (ReadWriteOnce).
-- `nemotron-model-cache` PVC with the NVFP4 weights already downloaded — the
-  server mounts it, so there is **no download step** and startup is fast.
-- `vllm-sweep-results-pvc` (20Gi, created automatically by `./run.sh deploy`
-  from `deployments/results-pvc.yaml`) for results — dedicated to this repo's
-  own `vllm-rate-*`/`vllm-users-*` jobs so it can't fill up from, or get
-  cleared alongside, other benchmarking work on the shared cluster. If it
-  ever does fill up, `./run.sh pull` then `./run.sh clean-results` clears it
-  safely; **never** point these jobs back at the old shared
-  `guidellm-results-pvc`.
-- `hf-token-secret` for the token.
-
-## Grid-searching hyperparameters (`sweep/`)
-
-`sweep/` automates the tune-loop above across many configs, one at a time.
-
-```
-sweep/grid.py           # the sweep plan: baseline + one-factor-at-a-time (OFAT) values
-sweep/run_sweep.py      # driver: deploy -> bench -> pull, once per config, logged + resumable
-sweep/load_results.py   # scans results/outputs/*.json + the manifest -> in-memory DataFrame
-sweep/plot_results.py   # reads the results directly + renders plots / recommends a config
-sweep/compare_tags.py   # head-to-head comparison of any two tags
-sweep/manifest.jsonl    # append-only record of every config run (tag, params, status, timing)
-sweep/logs/<tag>.log    # full run.sh output per config
-config/generated/       # per-config ConfigMap YAMLs rendered by run_sweep.py
-```
-
-Result JSONs are read directly by the plotting/comparison tools (via
-`sweep/load_results.py`) — there is no intermediate `aggregated.csv` to keep
-in sync anymore.
-
-**Why OFAT, not full factorial:** sweeping N params with K values each is
-K^N configs. `sweep/grid.py` instead holds everything at the baseline
-(current `config/vllm-params.yaml` values) and changes **one** knob per run,
-so cost is linear: `sum(len(values) - 1) + 1` configs. See it and its
-estimated run count/time with:
-
-```bash
-python3 sweep/grid.py            # print the plan as a table
-python3 sweep/run_sweep.py --dry-run   # plan + wall-clock estimate, no cluster calls
-```
-
-Currently swept (edit `SWEEP` in `sweep/grid.py` to add/remove/change values):
-
-| Param | Values tried | ConfigMap key |
-|---|---|---|
-| `kv_cache_dtype` | auto, fp8, fp8_e4m3, fp8_e5m2 | `KV_CACHE_DTYPE` |
-| `max_num_seqs` | 32, 64, 128, 256 | `MAX_NUM_SEQS` |
-| `max_num_batched_tokens` | 512, 1024, 2048, 4096, 8192 | `MAX_NUM_BATCHED_TOKENS` |
-| `attention_backend` | auto, FLASHINFER, TRITON_ATTN | `VLLM_ATTENTION_BACKEND` |
-| `gpu_memory_utilization` | 0.80, 0.85, 0.90, 0.95 | `GPU_MEMORY_UTILIZATION` |
-| `block_size` | 16, 32 | `BLOCK_SIZE` |
-| `max_model_len` | 8192, 32768, 131072, 262144 | `MAX_MODEL_LEN` |
-| `spec_decode_mtp` | 0 (baseline/off), 3, 4, 5 | `EXTRA_ARGS` (`--speculative-config`) |
-
-**Speculative decoding (MTP).** `spec_decode_mtp` sweeps
-`num_speculative_tokens` for Nemotron 3 Super's native Multi-Token Prediction
-head (no external draft model needed). `0` means spec decoding off, which the
-`baseline` run already covers, so only `3/4/5` create new runs. Unlike the other
-knobs it isn't a standalone ConfigMap key — it's a compact JSON blob *appended*
-to the baseline `EXTRA_ARGS`
-(`--speculative-config={"method":"nemotron_h_mtp","num_speculative_tokens":N}`).
-The JSON is deliberately space-free and uses the `--flag={...}` form because the
-Deployment entrypoint expands `$EXTRA_ARGS` **unquoted** (spaces/standalone
-quotes would word-split it into garbage, same as
-`config/custom/cache_offloading.yaml`'s `--kv-transfer-config={...}`).
-Run just this sweep with:
-
-```bash
-python3 sweep/run_sweep.py --only spec-decode --dry-run    # preview the 3 configs
-python3 sweep/run_sweep.py --only spec-decode --bench both  # run mtp 3/4/5
-python3 sweep/run_sweep.py --only spec-decode-mtp-5         # just the 5-token variant
-```
-
-`--only spec-decode` runs the three MTP variants only. The `0` (spec-off)
-point is the shared `baseline` run — run it once (`--only baseline`, or a full
-sweep) so `plot_results.py`/`compare_tags.py` have something to compare against:
-
-```bash
-python3 sweep/compare_tags.py baseline spec-decode-mtp-5   # spec decoding vs. off
-```
-
-Each spec-decode run also appends `--max-cudagraph-capture-size=128`: enabling
-MTP on top of the baseline (`0.9` util / `128` seqs, ~1 GiB free on the 95 GiB
-card) enlarges CUDA-graph capture and OOMs in `profile_cudagraph_memory` at
-startup. Capping the largest captured graph fixes the OOM while keeping
-cudagraphs **on**, so the spec runs stay comparable to the cudagraph-enabled
-baseline. If a variant still OOMs, drop `MAX_NUM_SEQS` (e.g. 64) or
-`GPU_MEMORY_UTILIZATION` (e.g. 0.85) for it.
-
-> Note: MTP interacts with other engine features; if a variant fails to start,
-> check the server log (`sweep/logs/spec-decode-mtp-*.log`) — some vLLM builds
-> need chunked prefill / prefix caching adjusted for Nemotron-H MTP.
-
-### Running the sweep
-
-```bash
-python3 sweep/run_sweep.py                      # full OFAT sweep, both benchmarks per config (~9h for 20 configs)
-python3 sweep/run_sweep.py --bench rate         # faster: rate test only per config
-python3 sweep/run_sweep.py --resume             # rerun after an interruption, skips completed configs
-python3 sweep/run_sweep.py --only max-num-seqs  # rerun/debug just one parameter's variants
-python3 sweep/run_sweep.py --stop-on-error      # abort on first failed config instead of continuing
-python3 sweep/run_sweep.py --suffix rerun2      # append a suffix to every tag (see below)
-```
-
-`--suffix <s>` appends a custom suffix to every tag, e.g.
-`gpu-memory-utilization-0-80` → `gpu-memory-utilization-0-80-rerun2`. Use it to
-re-run the whole sweep (or a subset via `--only`) without overwriting the
-earlier result files; `plot_results.py`/`compare_tags.py` then show the
-suffixed runs as distinct series labelled `<value> [rerun2]`. (k8s Job names
-are RFC-1123, so the separator is a dash even if you think of it as `_rerun2`.)
-
-Each config: renders `config/generated/vllm-params.<tag>.yaml` (baseline +
-one override) → `PARAMS=<that file> ./run.sh all <bench> <tag>` (deploy +
-wait Ready + benchmark) → `./run.sh pull <tag>` (always, even on failure, so
-partial results aren't lost). Every attempt — success or failure — gets one
-line in `sweep/manifest.jsonl` and a full log in `sweep/logs/<tag>.log`, so
-the sweep can be safely killed and resumed. `run.sh` propagates a real
-failing exit code when a benchmark Job fails on the cluster, so
-`--resume` only skips tags that are genuinely done.
-
-### Rerunning failed configs
-
-`--resume` trusts `sweep/manifest.jsonl`, which only reflects reality for
-runs made after the exit-code fix above. If you have older entries (or just
-want to double check), audit the manifest against what's actually in
-`results/` first:
-
-```bash
-python3 sweep/check_results.py                # report only: which tags are
-                                                # missing/empty result files
-python3 sweep/check_results.py --fix-manifest  # also append corrected
-                                                # "failed" entries for any
-                                                # stale "success" so...
-python3 sweep/run_sweep.py --resume            # ...this only reruns those
-```
-
-`--resume` builds the full OFAT plan and drops any tag whose *last* manifest
-entry is `"success"` — everything else (failed, interrupted, or never
-attempted) gets rerun, deploy + both benchmarks, from scratch.
-
-### Running a custom / one-off ConfigMap
-
-To run a single config you authored yourself (hand-edited, or one of the
-generated ones like `config/generated/vllm-params.recommended.yaml`)
-through the same deploy → bench → pull → manifest pipeline as the sweep,
-without touching the OFAT grid at all:
-
-```bash
-python3 sweep/run_sweep.py --custom-config config/generated/vllm-params.recommended.yaml --tag final-rerun
-# or any ConfigMap yaml you wrote by hand, anywhere:
-python3 sweep/run_sweep.py --custom-config /path/to/my-config.yaml --tag my-experiment
-```
-
-This records one entry in `sweep/manifest.jsonl` (`param: "custom"`) and one
-log in `sweep/logs/<tag>.log`, just like a normal sweep point, so it shows
-up alongside everything else in the plots. `--only` and
-`--resume` are ignored in this mode (there's no grid to filter). If you
-don't care about manifest/log tracking, the lighter-weight equivalent is
-just `PARAMS=/path/to/config.yaml ./run.sh all both <tag>` directly.
-
-### Plotting + picking a final config
-
-```bash
-pip install matplotlib pandas pyyaml   # once
-python3 sweep/plot_results.py                      # the whole sweep
-python3 sweep/plot_results.py --param max-num-seqs # just one parameter's sweep
-```
-
-Reads the pulled result JSONs directly (via `sweep/load_results.py`) and
-writes PNGs to `results/plots/`. With no arguments it renders the whole sweep:
-
-- `00_overview_rate.png` / `00_overview_concurrent.png` — every tag/run
-  compared head-to-head on TTFT p50/p99, ITL p50/p99, throughput, error rate.
-- `01_latency_throughput_frontier.png` — latency-vs-throughput tradeoff
-  curve for every config (p50 and p99 side by side), annotated by
-  concurrency level.
-- `param_<name>.png` — one per swept parameter: bar chart at the rate test
-  + line chart of how it scales across concurrency.
-- `param_rankings.csv` — the leaderboard table printed to stdout.
-
-With `--param <name>` (accepts the param name, its sanitized form, or a unique
-substring) it renders and ranks just that one parameter's sweep — handy while
-iterating on a single knob. Custom-suffixed runs (`run_sweep.py --suffix`)
-appear as distinct series labelled `<value> [<suffix>]`, and `--suffix <s>`
-restricts the whole view to just that suffix's runs (combine with `--param`
-to drill into one parameter of a suffixed sweep):
-
-```bash
-python3 sweep/plot_results.py --suffix decode-heavy                 # just that suffix
-python3 sweep/plot_results.py --suffix decode-heavy --param max-num-batched-tokens
-```
-
-Note the suffix is per-parameter, so a value like `512` under suffix
-`decode-heavy` becomes the tag `max-num-batched-tokens-512-decode-heavy`. To
-pull a whole suffixed sweep off the cluster, match on the suffix:
-`./run.sh pull decode-heavy`.
-
-In full mode it also ranks each parameter's tested values (excluding any whose
-error rate is too high to trust — see the script's `ERROR_RATE_THRESHOLD`,
-since a config that errors out most requests looks artificially *fast* on the
-survivors) and writes the best independently-tested value per parameter to
-`config/generated/vllm-params.recommended.yaml` (pass `--no-recommend` to
-skip), ready for a confirmation rerun:
-
-```bash
-python3 sweep/run_sweep.py --custom-config config/generated/vllm-params.recommended.yaml --tag final-rerun
-```
-
-Because the sweep is OFAT, this combines winners found independently, not a
-jointly-optimized combo — treat the rerun as a confirmation step.
-
-### Comparing two specific tags head-to-head
-
-`plot_results.py` renders every tag at once, which is noisy when you just
-want config A vs. config B (e.g. baseline vs. a candidate, or two finalists):
-
-```bash
-python3 sweep/compare_tags.py baseline max-num-seqs-256
-# fuzzy tag matching (unique substring) + custom legend labels also work:
-python3 sweep/compare_tags.py baseline final-rerun --label-a "current prod" --label-b "recommended"
-```
-
-Prints a delta table (tag_b vs. tag_a, % change) to stdout and writes to
-`results/plots/compare/`:
-
-- `<tag_a>_vs_<tag_b>_rate.png` — grouped bar chart at the rate test for
-  TTFT p50/p99, ITL p50/p99, end-to-end latency p50/p99, mean throughput,
-  and error rate.
-- `<tag_a>_vs_<tag_b>_concurrent.png` — same metrics as line charts scaling
-  across the 8/16/32/64 concurrency levels.
-- `<tag_a>_vs_<tag_b>_frontier.png` — latency-vs-throughput frontier for
-  just these two tags.
+| Then | Now |
+|---|---|
+| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>` |
+| `sweep/grid.py` `SWEEP` list | `experiments/*.yaml` |
+| `config/grid.json` + `run_grid.py` | `strategy.kind: grid` |
+| `config/custom/*.yaml` one-offs | one `ofat` axis of presets (`feature-probes`) |
+| two manifests + `param: "grid"` | `runs/index.jsonl` |
+| `plot_results.py` / `plot_grid.py` + CSVs | `./bench report` |
+| `check_results.py --fix-manifest` | `./bench doctor --fix` |
 
 ## SGLang (later)
 
-Adding SGLang is symmetric: a second Deployment (`strategy: Recreate`, same GPU
-+ model-cache PVC) fronted by its own Service, plus `--model-path` /
-`--chunked-prefill-size` / `--max-running-requests` flags instead of the vLLM
-ones. Because of the single-GPU rule you'll deploy one engine at a time; the
-benchmark Jobs just point at whichever Service is live.
+Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPU and cache
+PVC) behind its own Service, with `--model-path` / `--chunked-prefill-size` /
+`--max-running-requests` instead of the vLLM flags. Because of the single-GPU
+rule you would still run one engine at a time; the benchmark Jobs point at
+whichever Service is live.

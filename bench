@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# =============================================================================
+# bench - the single entry point for everything in this repo.
+#
+#   ./bench run <experiment>        deploy + benchmark every config in a spec
+#   ./bench report <experiment>     plots + leaderboards for what has run
+#   ./bench compare <tag> <tag>     head-to-head delta between two runs
+#   ./bench status | pull | doctor | models | clean
+#
+# Run `./bench help` for the full surface, or `./bench <cmd> --help`.
+#
+# The tool needs Python 3.12+ (the cluster's system python is 3.6), so this
+# shim delegates to uv, which provisions the interpreter and dependencies from
+# pyproject.toml on first use. Set BENCH_PYTHON to bypass uv entirely.
+# =============================================================================
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$HERE"
+
+if [ -n "${BENCH_PYTHON:-}" ]; then
+  exec "$BENCH_PYTHON" -m benchlab "$@"
+fi
+
+UV="${UV:-uv}"
+if ! command -v "$UV" >/dev/null 2>&1; then
+  for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+    [ -x "$candidate" ] && UV="$candidate" && break
+  done
+fi
+command -v "$UV" >/dev/null 2>&1 || {
+  echo "bench: uv not found on PATH." >&2
+  echo "  install it:  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+  echo "  or point at your own interpreter:  BENCH_PYTHON=python3.12 ./bench $*" >&2
+  exit 1
+}
+
+exec "$UV" run --quiet --project "$HERE" python -m benchlab "$@"

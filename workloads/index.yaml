@@ -1,0 +1,32 @@
+# =============================================================================
+# Workload registry: the load profiles `./bench` can fire at the server.
+#
+# `code` is the suffix on the Kubernetes Job name, so keep it short. The shape
+# of a workload (steady rate vs. a ladder of concurrency levels) is read out of
+# the scenario JSON itself — `spec.profile.kind` — so adding a workload here is
+# the only step needed to make it selectable:
+#
+#   ./bench run <experiment> --workloads decode-heavy
+# =============================================================================
+
+workloads:
+  rate:
+    file: coding-agent-rate.json
+    code: rate
+    note: >-
+      Coding-agent traffic as a steady 20 req/s Poisson stream. Measures
+      behavior under fixed offered load / saturation. The cheap one.
+
+  concurrent:
+    file: coding-agent-users.json
+    code: users
+    note: >-
+      Coding-agent traffic from a fixed number of busy users (8/16/32/64
+      streams). Measures how latency and throughput scale with concurrency.
+
+  decode-heavy:
+    file: decode-heavy-rate.json
+    code: dh
+    note: >-
+      Short prompts, long generations: isolates decode throughput from prefill
+      by shrinking prefixes and prompts while keeping outputs large.

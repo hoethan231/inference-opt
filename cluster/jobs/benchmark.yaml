@@ -1,0 +1,87 @@
+# =============================================================================
+# Benchmark Job (one template for every workload).
+#
+# This replaces the old jobs/vllm_rate.yaml + jobs/vllm_user.yaml pair, which
+# were identical apart from their hardcoded scenario filename — which is why
+# workloads/decode-heavy-rate.json used to be unreachable without editing a
+# manifest. The workload is now a placeholder, so any workloads/*.json can be
+# run by name.
+#
+# `./bench` substitutes the double-underscore names below; see
+# `bench render <experiment>` to dump the result without applying it.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: __JOB_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app: guidellm
+    bench.suite: vllm
+    bench.workload: __WORKLOAD_LABEL__
+    bench.tag: __TAG_LABEL__
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: __DEADLINE__
+  ttlSecondsAfterFinished: 604800 # keep the Job object 7 days for inspection
+  template:
+    metadata:
+      labels:
+        app: guidellm
+        bench.suite: vllm
+        bench.workload: __WORKLOAD_LABEL__
+        bench.tag: __TAG_LABEL__
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: guidellm
+          image: __GUIDELLM_IMAGE__
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: __PARAMS_CONFIGMAP__
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: __HF_SECRET__
+                  key: HF_TOKEN
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              SVC="__SERVICE_URL__"
+              # The scenario files carry a localhost target so they stay
+              # runnable by hand; point them at the in-cluster Service.
+              sed "s#http://localhost:8000#${SVC}#" /workloads/__SCENARIO_FILE__ > /tmp/scenario.json
+              echo "GuideLLM workload '__WORKLOAD_LABEL__' -> ${SVC}  (tag __TAG_LABEL__)"
+              exec guidellm run \
+                --scenario /tmp/scenario.json \
+                --tokenizer "{\"kind\":\"huggingface_auto\",\"model\":\"${MODEL_NAME}\",\"load_kwargs\":{\"trust_remote_code\":true}}" \
+                --output kind=console \
+                --output kind=json,path=__RESULTS_MOUNT__/__OUT_BASE__.json \
+                --output kind=html,path=__RESULTS_MOUNT__/__OUT_BASE__.html
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "6"
+              memory: 16Gi
+          volumeMounts:
+            - name: results
+              mountPath: __RESULTS_MOUNT__
+            - name: workloads
+              mountPath: /workloads
+              readOnly: true
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: __RESULTS_PVC__
+        - name: workloads
+          configMap:
+            name: __WORKLOADS_CONFIGMAP__

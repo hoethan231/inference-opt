@@ -1,5 +1,5 @@
 # =============================================================================
-# vllm-sweep-results-pvc — this repo's OWN results volume.
+# This repo's OWN results volume.
 #
 # Benchmark output (GuideLLM JSON/HTML) used to be written to the shared
 # `guidellm-results-pvc`, which other benchmarking work (SGLang tuning, MTP,
@@ -8,18 +8,18 @@
 # this repo's sweep (jobs would run the full load test, then crash with
 # "No space left on device" trying to save the report).
 #
-# This PVC is dedicated to `vllm-rate-*` / `vllm-users-*` jobs from this repo
-# only, so cleaning it up (or it filling up) never touches/interrupts anyone
-# else's data on the shared volume.
+# This PVC is dedicated to this repo's benchmark Jobs, so cleaning it up (or it
+# filling up) never touches or interrupts anyone else's data on the shared
+# volume. `bench clean results` wipes it; always `bench pull` first.
 # =============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: vllm-sweep-results-pvc
-  namespace: vllm-inf
+  name: __RESULTS_PVC__
+  namespace: __NAMESPACE__
   labels:
     app.kubernetes.io/component: benchmark
-    app.kubernetes.io/part-of: inference-optimization-sweep
+    app.kubernetes.io/part-of: inference-optimization-bench
 spec:
   accessModes:
     - ReadWriteOnce
