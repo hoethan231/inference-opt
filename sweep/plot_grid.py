@@ -4,19 +4,25 @@ plot_grid.py - comparison plots + a ranked leaderboard for a grid search.
 
 Consumes the grid results produced by sweep/run_grid.py (the pulled GuideLLM
 JSONs in results/outputs/ + sweep/grid_manifest.jsonl) and writes, to
-results/plots/grid/:
+results/plots/grid/, five files prefixed with the experiment name (the 'name'
+in the grid config, e.g. 'laguna' -> laguna_frontier.png):
 
-  1. grid_overview_rate.png        - every combo bar-charted head-to-head on
-                                     the steady-rate test (TTFT/ITL/throughput/
-                                     error rate).
-  2. grid_overview_concurrent.png  - the same metrics as lines vs. concurrency
-                                     (8/16/32/64 users), one line per combo.
-  3. grid_frontier.png             - latency-vs-throughput frontier, one line
-                                     per combo, annotated by concurrency level.
-  4. grid_ranking.png              - combos sorted by composite score.
-  5. grid_ranking.csv              - the full ranked leaderboard (one row per
-                                     combo, with each swept axis broken out
-                                     into its own column).
+  1. <name>_overview_rate.png        - every combo bar-charted head-to-head on
+                                       the steady-rate test (TTFT/ITL/
+                                       throughput/error rate).
+  2. <name>_overview_concurrent.png  - the same metrics as lines vs. concurrency
+                                       (8/16/32/64 users), one line per combo.
+  3. <name>_frontier.png             - latency-vs-throughput frontier, one line
+                                       per combo, annotated by concurrency level.
+  4. <name>_ranking.png              - combos sorted by composite score.
+  5. <name>_ranking.csv              - the full ranked leaderboard (one row per
+                                       combo, with each swept axis broken out
+                                       into its own column).
+
+Because grid_manifest.jsonl accumulates every grid ever run, the name both
+filters which combos are plotted and prefixes the output files. Without that,
+a new experiment silently overwrites the previous one's plots and blends
+unrelated models into one leaderboard.
 
 Scoring reuses plot_results.py exactly: a config that errors out more than
 ERROR_RATE_THRESHOLD of requests is gated out ("reliable" = False) so its
@@ -29,11 +35,13 @@ direct measurement of joint combinations, so the #1 row is a genuinely
 observed best config, not a per-axis best-guess.
 
 Usage:
-    python3 sweep/plot_grid.py
-    python3 sweep/plot_grid.py --name grid          # only tags 'grid-*'
+    python3 sweep/plot_grid.py                      # name from config/grid.json
+    python3 sweep/plot_grid.py --name laguna        # only tags 'laguna-*'
+    python3 sweep/plot_grid.py --all                # every grid combo, as 'all_*'
     python3 sweep/plot_grid.py --top 10             # annotate/limit ranking
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -46,6 +54,7 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
+from grid import sanitize  # noqa: E402
 from load_results import load_manifest, load_results  # noqa: E402
 from plot_results import (  # noqa: E402
     CMAP,
@@ -57,6 +66,22 @@ from plot_results import (  # noqa: E402
 
 GRID_MANIFEST = HERE / "grid_manifest.jsonl"
 OUT_DIR = REPO / "results" / "plots" / "grid"
+DEFAULT_GRID_CONFIG = REPO / "config" / "grid.json"
+# Deliberately not "grid": an experiment can itself be named 'grid', and --all
+# must not overwrite that experiment's own plots.
+ALL_PREFIX = "all"
+
+
+def name_from_config(path):
+    """The grid config's 'name', sanitized the same way run_grid.py builds tags
+    from it. Returns None if the config is missing/unreadable, so plotting
+    still works standalone."""
+    try:
+        with open(path) as f:
+            name = json.load(f).get("name")
+    except (OSError, ValueError):
+        return None
+    return sanitize(name) if name else None
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +144,7 @@ def prepare(results_dir, manifest_path, name):
 # ---------------------------------------------------------------------------
 # Comparison plots
 # ---------------------------------------------------------------------------
-def plot_overview_rate(rate_df, out_path):
+def plot_overview_rate(rate_df, out_path, title):
     if rate_df.empty:
         print("skip overview_rate: no rate-test rows")
         return
@@ -133,7 +158,7 @@ def plot_overview_rate(rate_df, out_path):
         ax.set_title(disp)
         ax.grid(axis="x", alpha=0.3)
         ax.tick_params(axis="y", labelsize=7)
-    fig.suptitle("Grid search -- rate test (steady offered load), every combo compared",
+    fig.suptitle("{} -- rate test (steady offered load), every combo compared".format(title),
                  fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out_path, dpi=130)
@@ -141,7 +166,7 @@ def plot_overview_rate(rate_df, out_path):
     print("wrote", out_path)
 
 
-def plot_overview_concurrent(conc_df, out_path):
+def plot_overview_concurrent(conc_df, out_path, title):
     if conc_df.empty:
         print("skip overview_concurrent: no concurrent-test rows")
         return
@@ -159,14 +184,15 @@ def plot_overview_concurrent(conc_df, out_path):
     handles, lbls = axes.flat[0].get_legend_handles_labels()
     fig.legend(handles, lbls, loc="lower center", ncol=min(4, len(labels)),
                fontsize=7, bbox_to_anchor=(0.5, -0.04))
-    fig.suptitle("Grid search -- concurrent-users test, every combo compared", fontsize=13)
+    fig.suptitle("{} -- concurrent-users test, every combo compared".format(title),
+                 fontsize=13)
     fig.tight_layout(rect=(0, 0.08, 1, 0.96))
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
     print("wrote", out_path)
 
 
-def plot_frontier(conc_df, out_path):
+def plot_frontier(conc_df, out_path, title):
     if conc_df.empty:
         print("skip frontier: no concurrent-test rows")
         return
@@ -189,7 +215,7 @@ def plot_frontier(conc_df, out_path):
         ax.set_title(ttft_label)
         ax.grid(alpha=0.3)
     axes[0].legend(fontsize=7, loc="best")
-    fig.suptitle("Grid search -- latency/throughput frontier (annotated with concurrency)",
+    fig.suptitle("{} -- latency/throughput frontier (annotated with concurrency)".format(title),
                  fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(out_path, dpi=130)
@@ -223,14 +249,14 @@ def build_leaderboard(rank_df, ov_by_tag, keys):
     return scored[cols]
 
 
-def plot_ranking(leaderboard, out_path, top):
+def plot_ranking(leaderboard, out_path, top, title):
     board = leaderboard.head(top) if top else leaderboard
     fig, ax = plt.subplots(figsize=(12, max(4, 0.5 * len(board) + 2)))
     colors = ["#2ca02c" if r else "#d62728" for r in board["reliable"]]
     ax.barh(board["label"], board["composite_score"], color=colors)
     ax.invert_yaxis()
     ax.set_xlabel("composite score (higher = better; red = failed reliability gate)")
-    ax.set_title("Grid search ranking -- best parameter combinations")
+    ax.set_title("{} ranking -- best parameter combinations".format(title))
     ax.grid(axis="x", alpha=0.3)
     ax.tick_params(axis="y", labelsize=8)
     for i, (_, row) in enumerate(board.iterrows()):
@@ -249,39 +275,60 @@ def main():
     ap.add_argument("--results-dir", default=str(REPO / "results" / "outputs"))
     ap.add_argument("--manifest", default=str(GRID_MANIFEST))
     ap.add_argument("--out-dir", default=str(OUT_DIR))
+    ap.add_argument("--config", default=str(DEFAULT_GRID_CONFIG),
+                    help="grid config to read the experiment 'name' from when "
+                    "--name is omitted (default: config/grid.json)")
     ap.add_argument("--name", default=None,
-                    help="only plot combos whose tag starts with '<name>-' "
-                    "(the grid config's 'name'); default: all grid combos")
+                    help="only plot combos whose tag starts with '<name>-', and "
+                    "prefix the output files with it; default: the 'name' in "
+                    "--config")
+    ap.add_argument("--all", action="store_true",
+                    help="plot every grid combo in the manifest regardless of "
+                    "name, writing '{}_*' files".format(ALL_PREFIX))
     ap.add_argument("--top", type=int, default=None,
                     help="limit the ranking chart to the top N combos "
                     "(the CSV always contains all of them)")
     args = ap.parse_args()
 
+    if args.all:
+        name = None
+    else:
+        name = args.name or name_from_config(args.config)
+        if not name:
+            sys.exit(
+                "could not determine the experiment name: no --name given and "
+                "no 'name' readable from {}.\nPass --name <prefix>, or --all to "
+                "plot every grid combo.".format(args.config)
+            )
+    prefix = name or ALL_PREFIX
+    title = "Grid search [{}]".format(name) if name else "Grid search"
+
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df, rate_df, conc_df, ov_by_tag, keys, _labels = prepare(
-        args.results_dir, args.manifest, args.name)
+        args.results_dir, args.manifest, name)
 
-    plot_overview_rate(rate_df, out_dir / "grid_overview_rate.png")
-    plot_overview_concurrent(conc_df, out_dir / "grid_overview_concurrent.png")
-    plot_frontier(conc_df, out_dir / "grid_frontier.png")
+    plot_overview_rate(rate_df, out_dir / "{}_overview_rate.png".format(prefix), title)
+    plot_overview_concurrent(
+        conc_df, out_dir / "{}_overview_concurrent.png".format(prefix), title)
+    plot_frontier(conc_df, out_dir / "{}_frontier.png".format(prefix), title)
 
     rank_df, basis = ranking_frame(rate_df, conc_df)
     leaderboard = build_leaderboard(rank_df, ov_by_tag, keys)
 
     print("\n" + "=" * 88)
-    print("GRID SEARCH LEADERBOARD ({}; error_rate > {:.0%} gated out via 'reliable')".format(
-        basis, ERROR_RATE_THRESHOLD))
+    print("{} LEADERBOARD ({}; error_rate > {:.0%} gated out via 'reliable')".format(
+        prefix.upper(), basis, ERROR_RATE_THRESHOLD))
     print("=" * 88)
     with pd.option_context("display.max_columns", None, "display.width", 200):
         print(leaderboard.drop(columns=["tag"]).to_string(index=False))
 
-    csv_path = out_dir / "grid_ranking.csv"
+    csv_path = out_dir / "{}_ranking.csv".format(prefix)
     leaderboard.to_csv(csv_path, index=False)
     print("\nwrote", csv_path)
 
-    plot_ranking(leaderboard, out_dir / "grid_ranking.png", args.top)
+    plot_ranking(leaderboard, out_dir / "{}_ranking.png".format(prefix), args.top, title)
 
     reliable = leaderboard[leaderboard["reliable"]]
     if reliable.empty:

@@ -1,0 +1,79 @@
+# =============================================================================
+# One-off Job: pre-download a model's weights onto the model-cache PVC.
+#
+# `run.sh deploy` waits on `kubectl rollout status --timeout=60m`, and the
+# Deployment's startupProbe also caps out at 60m (120 x 30s). A cold download
+# of a large checkpoint can eat most or all of that, so the first config of a
+# sweep gets recorded as a failure for reasons that have nothing to do with the
+# hyperparameters being tested. Seeding the weights first keeps every
+# per-combo deploy fast.
+#
+# Substitute __MODEL__ (same pattern as __TAG__ in the benchmark Jobs):
+#   sed 's|__MODEL__|poolside/Laguna-S-2.1-NVFP4|' jobs/model_preseed.yaml \
+#     | kubectl apply -f -
+#
+# Requests no GPU, but IS pinned to the GPU node: the model-cache PVC is
+# ReadWriteOnce and already attached there by vllm-server, and RWO only permits
+# multiple mounts from a single node. Without the pin this Job would sit in
+# Pending forever with a multi-attach error.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-preseed
+  namespace: vllm-inf
+  labels:
+    app: model-preseed
+    app.kubernetes.io/part-of: inference-optimization-sweep
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 10800
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: model-preseed
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: hermes-2-rtx-6000-k4png-lzqt5-gmxq9-dxx7q
+      containers:
+        - name: downloader
+          image: vllm/vllm-openai:v0.26.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token-secret
+                  key: HF_TOKEN
+            - name: HF_HOME
+              value: /models/huggingface
+            - name: HF_XET_HIGH_PERFORMANCE
+              value: "1"
+            - name: MODEL
+              value: __MODEL__
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "Pre-seeding ${MODEL} into ${HF_HOME}"
+              df -h /models
+              time hf download "${MODEL}"
+              echo "--- done; volume now: ---"
+              df -h /models
+              du -sh "${HF_HOME}/hub"/* 2>/dev/null || true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 24Gi
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: nemotron-model-cache

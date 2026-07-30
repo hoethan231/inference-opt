@@ -4,3 +4,4 @@ results/*
 config/generated/
 sweep/logs/
 sweep/manifest.jsonl
+sweep/grid_manifest.jsonl
