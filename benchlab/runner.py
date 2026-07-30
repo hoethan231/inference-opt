@@ -211,15 +211,17 @@ def _execute(
                 return finish(store.FAILED, kind="smoke", detail=detail)
             util.step(f"smoke test passed ({detail})")
 
-        # 4. benchmark every workload against this one deploy.
+        # 4. benchmark every workload against this one deploy, recording what the
+        #    engine does while the load is on it.
         failures = []
-        for workload in workloads:
-            job = kube.run_benchmark(
-                run, workload, run_dir / f"{workload.name}.log", echo=options.echo_logs
-            )
-            if not job.ok:
-                failures.append(f"{workload.name}: {job.detail}")
-                util.warn(f"workload '{workload.name}' failed: {job.detail}")
+        with kube.engine_trace(run_dir / "engine.log"):
+            for workload in workloads:
+                job = kube.run_benchmark(
+                    run, workload, run_dir / f"{workload.name}.log", echo=options.echo_logs
+                )
+                if not job.ok:
+                    failures.append(f"{workload.name}: {job.detail}")
+                    util.warn(f"workload '{workload.name}' failed: {job.detail}")
 
         # 5. pull whatever landed, even on failure — partial data is still data.
         record.results = _collect_results(kube, run, workloads, run_dir)

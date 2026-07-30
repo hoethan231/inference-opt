@@ -112,11 +112,18 @@ def output_base(run: Run, workload: Workload) -> str:
     return f"{run.tag}__{workload.name}"
 
 
+def job_deadline(workload: Workload) -> int:
+    """Wall-clock ceiling for a benchmark Job.
+
+    Headroom over the scenario's own duration so a slow warmup doesn't get
+    killed as a false failure.
+    """
+    return int(workload.est_seconds * 1.5) + 600
+
+
 def benchmark_job(cluster: Cluster, run: Run, workload: Workload) -> str:
     values = _common(cluster)
-    # Give the Job headroom over the scenario's own duration so a slow warmup
-    # doesn't get killed as a false failure.
-    deadline = int(workload.est_seconds * 1.5) + 600
+    deadline = job_deadline(workload)
     values.update(
         {
             "JOB_NAME": job_name(run, workload),

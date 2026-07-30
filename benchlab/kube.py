@@ -8,14 +8,16 @@ smuggled back through an exit code.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
@@ -54,17 +56,22 @@ class Kube:
             util.die("kubectl not found on PATH")
 
     # -- plumbing ---------------------------------------------------------
-    def _kubectl(
+    def _run(
         self,
         args: list[str],
         *,
         stdin: str | None = None,
-        check: bool = True,
         timeout: int | None = 300,
-    ) -> str:
+    ) -> subprocess.CompletedProcess[str]:
+        """Run kubectl and hand back the whole result, stderr included.
+
+        `_kubectl` yields stdout alone, which is what callers that parse output
+        want but throws away *why* a command failed: a failed `exec` prints
+        nothing on stdout, so its entire diagnostic lives in stderr.
+        """
         cmd = ["kubectl", "-n", self.cluster.namespace, *args]
         try:
-            proc = subprocess.run(
+            return subprocess.run(
                 cmd,
                 input=stdin,
                 capture_output=True,
@@ -73,7 +80,18 @@ class Kube:
             )
         except subprocess.TimeoutExpired:
             raise KubectlError(f"timed out after {timeout}s: {' '.join(cmd)}") from None
+
+    def _kubectl(
+        self,
+        args: list[str],
+        *,
+        stdin: str | None = None,
+        check: bool = True,
+        timeout: int | None = 300,
+    ) -> str:
+        proc = self._run(args, stdin=stdin, timeout=timeout)
         if check and proc.returncode != 0:
+            cmd = ["kubectl", "-n", self.cluster.namespace, *args]
             raise KubectlError(
                 f"{' '.join(cmd)} failed ({proc.returncode}): "
                 f"{(proc.stderr or proc.stdout).strip()}"
@@ -136,6 +154,32 @@ class Kube:
     def apply_workloads(self, workloads: list[Workload]) -> None:
         self.apply(render.workloads_configmap(self.cluster, workloads))
 
+    def host_facts(self, node_name: str) -> dict[str, Any]:
+        """Which machine a run actually landed on.
+
+        A sweep only means anything if consecutive runs share a substrate, and
+        these nodes get recycled and driver-upgraded underneath us. Recording the
+        host makes an environment change visible as an environment change,
+        instead of looking like a regression in whatever config was being swept.
+        """
+        if not node_name:
+            return {}
+        try:
+            node = self.get_json("get", "node", node_name)
+        except KubectlError:
+            return {}
+        labels = node.get("metadata", {}).get("labels", {}) or {}
+        facts: dict[str, Any] = {"node": node_name}
+        for key, label in (
+            ("gpu_product", "nvidia.com/gpu.product"),
+            ("gpu_memory_mib", "nvidia.com/gpu.memory"),
+            ("gpu_count", "nvidia.com/gpu.count"),
+            ("gpu_driver", "nvidia.com/cuda.driver-version.full"),
+        ):
+            if label in labels:
+                facts[key] = labels[label]
+        return facts
+
     # -- the single GPU ---------------------------------------------------
     def foreign_gpu_holders(self) -> list[str]:
         """Pods holding the GPU that aren't our engine."""
@@ -197,10 +241,12 @@ class Kube:
                 )
 
     # -- the engine -------------------------------------------------------
-    def server_pod(self) -> dict[str, Any] | None:
+    def server_pod(self, *, exclude_uid: str | None = None) -> dict[str, Any] | None:
         pods = self.get_json(
             "get", "pods", "-l", f"app={self.cluster.app_label}"
         ).get("items", [])
+        if exclude_uid:
+            pods = [p for p in pods if p.get("metadata", {}).get("uid") != exclude_uid]
         if not pods:
             return None
         return sorted(
@@ -223,6 +269,14 @@ class Kube:
         a pod that OOMed at startup crash-loops, so this polls the pod and bails
         out as soon as the log or the container state says it will never be Ready.
         """
+        # `rollout restart` returns before the replacement pod exists, and with
+        # strategy: Recreate the outgoing pod stays Ready until it is torn down.
+        # Without excluding it by identity the loop below matches the pod still
+        # serving the *previous* run and reports "Ready in 0s" against a config
+        # that was never applied.
+        outgoing = self.server_pod()
+        outgoing_uid = (outgoing or {}).get("metadata", {}).get("uid")
+
         self.apply(render.deployment(self.cluster, model))
         self._kubectl(["rollout", "restart", f"deployment/{self.cluster.deployment}"])
 
@@ -231,8 +285,11 @@ class Kube:
         last_note = ""
         restarts_seen = 0
         while time.time() < deadline:
-            pod = self.server_pod()
+            pod = self.server_pod(exclude_uid=outgoing_uid)
             if pod is None:
+                if last_note != "replacing":
+                    util.step(f"waiting for {self.cluster.deployment}: replacing pod")
+                    last_note = "replacing"
                 time.sleep(5)
                 continue
             name = pod.get("metadata", {}).get("name", "")
@@ -247,7 +304,9 @@ class Kube:
                 log = self.pod_logs(name)
                 elapsed = time.time() - started
                 util.ok(f"server Ready in {util.human_duration(elapsed)} ({name})")
-                return DeployOutcome(True, "ready", log=log, facts=engine.facts(log))
+                facts = engine.facts(log)
+                facts.update(self.host_facts(pod.get("spec", {}).get("nodeName", "")))
+                return DeployOutcome(True, "ready", log=log, facts=facts)
 
             waiting = (state.get("waiting") or {}).get("reason", "")
             if waiting in ("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
@@ -287,7 +346,7 @@ class Kube:
                 last_note = note
             time.sleep(10)
 
-        pod = self.server_pod()
+        pod = self.server_pod(exclude_uid=outgoing_uid)
         log = self.pod_logs(pod["metadata"]["name"]) if pod else ""
         return DeployOutcome(
             False,
@@ -325,16 +384,67 @@ class Kube:
             "print('OK', served)\n"
         )
         try:
-            out = self._kubectl(
-                ["exec", name, "--", "python3", "-c", script],
-                check=False,
-                timeout=timeout_s,
+            proc = self._run(
+                ["exec", name, "--", "python3", "-c", script], timeout=timeout_s
             )
         except KubectlError as exc:
             return False, str(exc)
+        out = (proc.stdout or "").strip()
         if "OK" in out:
-            return True, out.strip().splitlines()[-1]
-        return False, (out.strip() or "smoke test produced no output").splitlines()[-1]
+            return True, out.splitlines()[-1]
+        # The failure is almost always on stderr: an assertion from the script
+        # above, or kubectl itself reporting that the container went away.
+        detail = "\n".join(t for t in (out, (proc.stderr or "").strip()) if t)
+        if not detail:
+            return False, f"exec into {name} exited {proc.returncode} with no output"
+        return False, detail.splitlines()[-1]
+
+    @contextlib.contextmanager
+    def engine_trace(self, log_path: Path) -> Iterator[None]:
+        """Record the engine's own log for as long as the block runs.
+
+        `server.log` is captured the instant the pod reports Ready, so it stops
+        before any load arrives. When a benchmark stalls rather than errors, the
+        evidence — KV cache usage, queue depth, prefill throughput — exists only
+        in the engine log *during* the run, and was being thrown away.
+        """
+        pod = self.server_pod()
+        if pod is None:
+            yield
+            return
+        name = pod.get("metadata", {}).get("name", "")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        sink = open(log_path, "a", encoding="utf-8")
+        sink.write(f"\n===== engine trace: {name} =====\n")
+        sink.flush()
+        proc = subprocess.Popen(
+            ["kubectl", "-n", self.cluster.namespace, "logs", "-f", name, "--since=1s"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        def pump() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                sink.write(line)
+                # Flushed per line: this trace exists to explain runs that get
+                # killed, so buffered output is output we never see.
+                sink.flush()
+
+        thread = threading.Thread(target=pump, daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            thread.join(timeout=15)
+            sink.close()
 
     # -- benchmark jobs ---------------------------------------------------
     def reap_stale_bench_pods(self) -> None:
@@ -372,7 +482,7 @@ class Kube:
             timeout=start_timeout + 30,
         )
         self._stream_logs(f"job/{name}", log_path, echo=echo)
-        return self._await_job(name)
+        return self._await_job(name, deadline_s=render.job_deadline(workload))
 
     def _stream_logs(self, target: str, log_path: Path | None, *, echo: bool) -> None:
         cmd = ["kubectl", "-n", self.cluster.namespace, "logs", "-f", target]
@@ -397,21 +507,59 @@ class Kube:
             if sink is not None:
                 sink.close()
 
-    def _await_job(self, name: str, *, poll_s: int = 10, grace_s: int = 600) -> JobOutcome:
+    def _await_job(
+        self,
+        name: str,
+        *,
+        poll_s: int = 10,
+        grace_s: int = 600,
+        deadline_s: int | None = None,
+        reason_wait_s: int = 60,
+    ) -> JobOutcome:
+        """Wait for the Job to reach a terminal state, and say why it got there.
+
+        `status.failed` flips as soon as the pod fails, but the Job-level
+        `Failed` condition carrying the reason (DeadlineExceeded,
+        BackoffLimitExceeded) is written a moment later. Returning on `failed`
+        alone therefore reported every failure as an unexplained one — which is
+        how a sweep killed by its own activeDeadlineSeconds looked identical to
+        a benchmark that crashed.
+        """
         deadline = time.time() + grace_s
+        reason_deadline: float | None = None
         while time.time() < deadline:
-            job = self.get_json("get", "job", name)
-            status = job.get("status", {}) or {}
+            status = self.get_json("get", "job", name).get("status", {}) or {}
             if int(status.get("succeeded") or 0) > 0:
                 return JobOutcome(True, "complete")
             if int(status.get("failed") or 0) > 0:
-                reason = ""
-                for cond in status.get("conditions") or []:
-                    if cond.get("type") == "Failed":
-                        reason = cond.get("reason") or cond.get("message") or ""
-                return JobOutcome(False, "bench", detail=reason or "benchmark Job failed")
+                explained = self._job_failure(status, deadline_s)
+                if explained:
+                    return JobOutcome(False, "bench", detail=explained)
+                if reason_deadline is None:
+                    reason_deadline = time.time() + reason_wait_s
+                elif time.time() >= reason_deadline:
+                    return JobOutcome(
+                        False, "bench", detail="benchmark Job failed (no reason reported)"
+                    )
             time.sleep(poll_s)
         return JobOutcome(False, "bench", detail="Job neither completed nor failed in time")
+
+    @staticmethod
+    def _job_failure(status: dict[str, Any], deadline_s: int | None) -> str:
+        """The Failed condition's reason and message, once Kubernetes writes it."""
+        for cond in status.get("conditions") or []:
+            if cond.get("type") != "Failed" or cond.get("status") != "True":
+                continue
+            reason = cond.get("reason") or ""
+            message = cond.get("message") or ""
+            detail = ": ".join(part for part in (reason, message) if part)
+            if reason == "DeadlineExceeded" and deadline_s:
+                detail += (
+                    f" — killed at its {util.human_duration(deadline_s)} ceiling, so it "
+                    f"wrote no results; the workload made no progress or needs longer"
+                )
+            return detail or "benchmark Job failed"
+        return ""
 
     # -- results ----------------------------------------------------------
     def _utility_pod(
