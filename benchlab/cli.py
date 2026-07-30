@@ -29,7 +29,7 @@ examples:
   ./bench run ofat-scheduler --dry-run       show the plan and the time it needs
   ./bench run laguna-grid --resume           carry on after an interruption
   ./bench run ofat-scheduler --only mns      just one axis
-  ./bench report ofat-scheduler              plots + leaderboards
+  ./bench report ofat-scheduler              plots for every config in it
   ./bench runs                               what has been measured, with tags
   ./bench compare <tag> <tag>                head-to-head deltas
   ./bench status                             what the cluster is doing now
@@ -194,7 +194,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                 f"view (--suffix <name> to plot one, --all-suffixes for everything)"
             )
 
-    report.build(records, out_dir, title, param=args.param, top=args.top)
+    report.build(records, out_dir, title, param=args.param)
     return 0
 
 
@@ -391,7 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.set_defaults(func=cmd_render)
 
     report_parser = subparsers.add_parser(
-        "report", help="plots and leaderboards for recorded runs"
+        "report", help="plots for recorded runs"
     )
     report_parser.add_argument("experiment", nargs="?", help="experiment to report on")
     report_parser.add_argument("--all", action="store_true", help="every recorded run")
@@ -406,7 +406,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="plot base and suffixed runs together (they may not be comparable)",
     )
-    report_parser.add_argument("--top", type=int, help="limit the ranking chart to N configs")
     report_parser.add_argument(
         "--include-failed",
         action="store_true",

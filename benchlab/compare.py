@@ -22,9 +22,14 @@ DELTA_METRICS = [
     ("itl_ms_p99", "ITL p99 (ms)", 2, True),
     ("latency_s_p50", "E2E latency p50 (s)", 2, True),
     ("latency_s_p99", "E2E latency p99 (s)", 2, True),
-    ("tps_mean", "Throughput (tok/s)", 1, False),
+    ("output_tps_p50", "Output throughput p50 (tok/s)", 1, False),
+    ("output_tps_p99", "Output throughput p99 (tok/s)", 1, False),
     ("error_rate", "Error rate", 4, True),
 ]
+
+# Error rate belongs in the table, where one number answers the question, but not
+# on the eight-panel figures: it is a pass/fail gate rather than a curve.
+PLOT_METRICS = [m for m in DELTA_METRICS if m[0] != "error_rate"]
 
 
 def _delta_rows(
@@ -58,9 +63,8 @@ def _plot_bars(
 ) -> None:
     import matplotlib.pyplot as plt
 
-    metrics = [m for m in DELTA_METRICS]
     fig, axes = plt.subplots(2, 4, figsize=(20, 9))
-    for ax, (column, label, _, _) in zip(axes.flat, metrics):
+    for ax, (column, label, _, _) in zip(axes.flat, PLOT_METRICS):
         values = [
             df[df["series_label"] == labels[0]][column].mean(),
             df[df["series_label"] == labels[1]][column].mean(),
@@ -80,7 +84,7 @@ def _plot_lines(
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(2, 4, figsize=(20, 9))
-    for ax, (column, label, _, _) in zip(axes.flat, DELTA_METRICS):
+    for ax, (column, label, _, _) in zip(axes.flat, PLOT_METRICS):
         for name, color in zip(labels, ("#1f77b4", "#ff7f0e")):
             subset = df[df["series_label"] == name].sort_values("target")
             ax.plot(subset["target"], subset[column], marker="o", label=name, color=color)

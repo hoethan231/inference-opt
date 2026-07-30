@@ -5,7 +5,7 @@ One row per (run, workload, load level):
   * a concurrency ladder contributes one row per level (8/16/32/64), with the
     level read from the scenario rather than hardcoded.
 
-Everything downstream (plots, leaderboards, comparisons) reads this frame, so
+Everything downstream (plots, comparisons) reads this frame, so
 there is a single definition of every metric column.
 
 A single GuideLLM result file can be ~100 MB, and a sweep has dozens, so the
@@ -218,7 +218,7 @@ def frame(records: list[RunRecord], *, quiet: bool = False, refresh: bool = Fals
         lambda r: f"{r['model']}: {r['value_display']}" if multi_model else r["value_display"],
         axis=1,
     )
-    # Series labels key the plots and the leaderboard, so two different runs must
+    # Series labels key the plots and their legends, so two different runs must
     # never share one — otherwise they'd be drawn over each other, or dropped as
     # duplicates. Imported one-off runs in particular have uninformative values.
     per_series = df.groupby("series")["tag"].nunique()

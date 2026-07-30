@@ -3,13 +3,18 @@
 One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
 Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
 different sizes, so they share one command, one results store and one report.
+# Inference optimization bench
+
+One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
+Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
+different sizes, so they share one command, one results store and one report.
 
 ```bash
 export HF_TOKEN=hf_xxx              # first time only; creates the Secret
 
 ./bench models                      # what can be run: models, workloads, experiments
 ./bench run baseline                # deploy one config, benchmark it, record it
-./bench report baseline             # plots + leaderboard
+./bench report baseline             # plots
 ```
 
 Everything else is a variation on that. `./bench` with no arguments lists the
@@ -119,8 +124,107 @@ Reports label each series with its model when more than one is in view, so
 cross-model comparison happens at report time rather than needing its own mode.
 
 ## Running
+| `single` | 1 | one config, e.g. a baseline or a candidate to confirm |
+| `ofat` | `sum(len(values) - 1) + 1` | finding each knob's best value on its own |
+| `grid` | product of the axes | proving a *combination*, once OFAT has narrowed it |
+
+An axis usually names a ConfigMap key:
+
+```yaml
+name: ofat-scheduler
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: ofat
+  axes:
+    - key: MAX_NUM_SEQS
+      note: max concurrent running sequences — the scheduler's bouncer
+      values: ["32", "64", "128", "256"]
+```
+
+...but a value can change several things at once, or append a flag instead of
+setting a key — which is how speculative decoding, kernel probes and anything
+else without its own ConfigMap key are expressed:
+
+```yaml
+    - param: spec_tokens
+      abbrev: mtp
+      extra_args: >-
+        --speculative-config={{"method":"{spec_decode_method}","num_speculative_tokens":{value}}}
+      values: ["3", "4", "5"]
+
+    - param: feature
+      values:
+        - label: cutlass-moe
+          params: {MAX_NUM_SEQS: "256"}
+          extra_args: --moe-backend=flashinfer_cutlass
+```
+
+`{spec_decode_method}` and `{hf_repo}` come from the model registry, so pointing
+the experiment at another model picks up that model's method rather than
+hardcoding one. `abbrev:` fixes how the axis appears in tags
+(`spec-decode-mtp-5`); without it a tag spells the axis out and only falls back
+to an abbreviation when it would otherwise exceed the Kubernetes name limit.
+The shipped experiments are `baseline`, `ofat-scheduler`,
+`grid-scheduler`, `spec-decode`, `feature-probes` and `laguna-grid`; each one's
+header comment explains what it is for.
+
+### Where a config's values come from
+
+Lowest precedence to highest:
+
+```
+cluster/params-base.yaml  <  models/<model>.yaml  <  experiments/<exp>.yaml  <  the axis value
+```
+
+Model identity (`MODEL_NAME`, `SERVED_MODEL_NAME`) is applied last and can't be
+set by an experiment, so an experiment can never quietly serve a different
+checkpoint than the one in its `model:` field.
+
+## Multiple models
+
+A model file owns everything model-specific — weights, cache volume, image, the
+parser flags its chat template needs, and defaults for knobs whose ceiling is
+model-dependent:
+
+```yaml
+name: nemotron-3-super-120b
+hf_repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+cache_pvc: nemotron-model-cache
+params:
+  MAX_MODEL_LEN: "262144"
+extra_args: [--trust-remote-code, --tool-call-parser=qwen3_coder]
+spec_decode_method: nemotron_h_mtp
+```
+
+Switching an experiment to another model is one line (`model: laguna-s-2.1`). If
+its weights aren't on the cache volume yet, `bench run` notices and pre-seeds the
+download first (a Job on whichever node has the GPU — no hostname is hardcoded).
+Reports label each series with its model when more than one is in view, so
+cross-model comparison happens at report time rather than needing its own mode.
+
+## Running
 
 ```bash
+./bench run ofat-scheduler --dry-run          # the plan and the wall-clock estimate
+./bench run ofat-scheduler                    # all of it
+./bench run ofat-scheduler --only max_num_seqs  # one axis (matches tag, axis or value)
+./bench run ofat-scheduler --resume           # carry on, skipping what already succeeded
+./bench run baseline --workloads rate         # cheaper: one workload
+./bench run ofat-scheduler --suffix rerun2    # same sweep, tags suffixed, nothing overwritten
+```
+
+Safe to interrupt: every attempt is recorded, so `--resume` picks up exactly
+what is left. A config that fails is retried once with a fresh deploy — except
+when it failed because it cannot fit in memory, which retrying cannot fix.
+
+`--suffix rerun2` turns `max-num-seqs-256` into `max-num-seqs-256-rerun2`.
+Reports treat a suffix as a separate group and keep it out of the default view,
+because it is usually a different question (a different workload, or a rerun);
+`--suffix rerun2` plots that group, `--all-suffixes` plots everything together.
+
+## Reading the results
 ./bench run ofat-scheduler --dry-run          # the plan and the wall-clock estimate
 ./bench run ofat-scheduler                    # all of it
 ./bench run ofat-scheduler --only max_num_seqs  # one axis (matches tag, axis or value)
@@ -142,34 +246,43 @@ because it is usually a different question (a different workload, or a rerun);
 
 ```bash
 ./bench runs                          # what has been measured, with tags
-./bench report ofat-scheduler         # per-axis figures + leaderboards
+./bench report ofat-scheduler         # overview, frontier and per-axis figures
 ./bench report ofat-scheduler --param max_num_seqs   # drill into one axis
-./bench report --all                  # everything, every model, one ranking
-./bench compare baseline spec-decode-mtp-5           # head-to-head
+./bench report --all                  # everything, every model, on shared axes
+./bench compare baseline spec-decode-mtp-5           # head-to-head, with numbers
 ```
 
-PNGs and the recommended config land in `reports/<experiment>/`; tables print to
-stdout. There are no CSVs and no aggregation step — the report reads the run
-store directly. Parsed metrics are cached per run (`runs/<tag>/summary.json`,
-fingerprinted by size and mtime), which is the difference between a report taking
-milliseconds and re-parsing gigabytes of GuideLLM JSON.
+PNGs land in `reports/<experiment>/`. There are no CSVs and no aggregation step —
+the report reads the run store directly. Parsed metrics are cached per run
+(`runs/<tag>/summary.json`, fingerprinted by size and mtime), which is the
+difference between a report taking milliseconds and re-parsing gigabytes of
+GuideLLM JSON.
 
-Ranking is a composite score over TTFT, end-to-end latency and throughput, with
-two gates in front of it: a run that completed **no** requests can't be ranked at
-all, and one whose error rate is above 5% is disqualified — otherwise a config
-that failed most requests looks impressively fast on the survivors.
+Each figure pairs p50 with p99: TTFT, inter-token latency and output throughput.
+`bench report` draws every run in view; `bench compare` is the one that prints
+numbers, as a delta table between exactly two runs.
 
-The report also writes the winner back out as a runnable experiment, e.g.
-`reports/ofat-scheduler/recommended-ofat-scheduler.yaml`:
+**There is no ranking, no score and no leaderboard.** Which config is "best"
+depends on whether you are optimising for time-to-first-token, tail latency or
+tokens per second, and collapsing those into one number hides the tradeoff the
+plots exist to show. Pick from the frontier plot, then confirm with `compare`.
 
-```bash
-./bench run reports/ofat-scheduler/recommended-ofat-scheduler.yaml
-```
+Two things a plot cannot show, so the report says them in words: a run that
+completed no requests at all (its lines sit at zero, which looks fast), and a run
+whose error rate is above 5% (its latencies describe only the requests that
+survived). Both are listed after the figures, and `bench doctor` finds them too.
 
-For a grid that is just the winning config, which really was measured. For an
-OFAT sweep it is the per-axis winners combined — each chosen in isolation, so
-treat it as a hypothesis: run it, then
-`./bench compare baseline recommended-ofat-scheduler`.
+### About throughput
+
+Throughput in the plots is GuideLLM's `output_tokens_per_second`, not
+`tokens_per_second`. The latter is not usable as a distribution: it reports a
+whole-run aggregate as its mean but windowed samples as its percentiles, so one
+run can show a mean of 15,064 tok/s, a p50 of 36 and a p99 of 405,869. Output
+tokens per second is internally consistent, so its p50 and p99 mean what they say.
+
+Note that output throughput therefore excludes prompt tokens. On this
+coding-agent traffic, with its large shared prefixes, total token rate is roughly
+two orders of magnitude higher than the output rate.
 
 GuideLLM's own HTML report is pulled alongside the JSON in `runs/<tag>/` when you
 want the per-request detail behind a number.
@@ -179,8 +292,16 @@ want the per-request detail behind a number.
 ```bash
 ./bench doctor            # index vs. what's actually on disk
 ./bench doctor --fix      # mark unusable runs failed, so --resume redoes them
+./bench doctor            # index vs. what's actually on disk
+./bench doctor --fix      # mark unusable runs failed, so --resume redoes them
 ```
 
+`doctor` catches a run recorded as successful whose result file is missing,
+truncated, or contains zero successful requests. `runs/index.jsonl` is
+append-only — a record is never rewritten, so retries and a killed sweep's
+history both stay visible, and readers take the last entry per tag.
+
+## Cluster commands
 `doctor` catches a run recorded as successful whose result file is missing,
 truncated, or contains zero successful requests. `runs/index.jsonl` is
 append-only — a record is never rewritten, so retries and a killed sweep's
@@ -212,7 +333,7 @@ cluster/
 runs/
   index.jsonl             # append-only record of every attempt
   <tag>/                  # result JSON + HTML, engine facts, logs
-reports/                  # PNGs, and auto-written recommended configs
+reports/                  # PNGs, one directory per experiment
 archive/                  # the pre-refactor tools, configs and outputs
 ```
 
@@ -318,9 +439,26 @@ the store under `legacy-*` experiment names and still comparable:
 | two manifests + `param: "grid"` | `runs/index.jsonl` |
 | `plot_results.py` / `plot_grid.py` + CSVs | `./bench report` |
 | `check_results.py --fix-manifest` | `./bench doctor --fix` |
+./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95
+```
+
+| Then | Now |
+|---|---|
+| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>` |
+| `sweep/grid.py` `SWEEP` list | `experiments/*.yaml` |
+| `config/grid.json` + `run_grid.py` | `strategy.kind: grid` |
+| `config/custom/*.yaml` one-offs | one `ofat` axis of presets (`feature-probes`) |
+| two manifests + `param: "grid"` | `runs/index.jsonl` |
+| `plot_results.py` / `plot_grid.py` + CSVs | `./bench report` |
+| `check_results.py --fix-manifest` | `./bench doctor --fix` |
 
 ## SGLang (later)
 
+Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPU and cache
+PVC) behind its own Service, with `--model-path` / `--chunked-prefill-size` /
+`--max-running-requests` instead of the vLLM flags. Because of the single-GPU
+rule you would still run one engine at a time; the benchmark Jobs point at
+whichever Service is live.
 Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPU and cache
 PVC) behind its own Service, with `--model-path` / `--chunked-prefill-size` /
 `--max-running-requests` instead of the vLLM flags. Because of the single-GPU
