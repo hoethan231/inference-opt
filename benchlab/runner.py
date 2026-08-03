@@ -30,7 +30,7 @@ class Options:
     tag: str | None = None
     dry_run: bool = False
     stop_on_error: bool = False
-    max_retries: int = 1
+    max_retries: int = 0
     gpu_wait_timeout: int = 180
     preseed: bool = True
     smoke: bool = True

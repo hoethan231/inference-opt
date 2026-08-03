@@ -529,7 +529,7 @@ class Kube:
             timeout=start_timeout + 30,
         )
         self._stream_logs(f"job/{name}", log_path, echo=echo)
-        return self._await_job(name, deadline_s=render.job_deadline(workload))
+        return self._await_job(name, deadline_s=render.job_deadline(self.cluster, workload))
 
     def _stream_logs(self, target: str, log_path: Path | None, *, echo: bool) -> None:
         cmd = ["kubectl", "-n", self.cluster.namespace, "logs", "-f", target]

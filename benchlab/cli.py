@@ -76,8 +76,8 @@ def _add_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=1,
-        help="retries for a failed config, fresh deploy each time (default: 1). "
+        default=0,
+        help="retries for a failed config, fresh deploy each time (default: 0). "
         "Configs that fail because they cannot fit in memory are never retried",
     )
     parser.add_argument(

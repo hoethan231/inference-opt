@@ -118,18 +118,24 @@ def output_base(run: Run, workload: Workload) -> str:
     return f"{run.tag}__{workload.name}"
 
 
-def job_deadline(workload: Workload) -> int:
+def job_deadline(cluster: Cluster, workload: Workload) -> int:
     """Wall-clock ceiling for a benchmark Job.
 
     Headroom over the scenario's own duration so a slow warmup doesn't get
-    killed as a false failure.
+    killed as a false failure. The estimate counts the sending window, but a
+    workload also has to drain whatever is still in flight when that window
+    closes — with multi-turn conversations against a slow model that tail can
+    be several times the window, so the slack is configurable per cluster
+    rather than fixed to the one model it was first tuned against.
     """
-    return int(workload.est_seconds * 1.5) + 600
+    pct = cluster.timeout("bench_slack_pct", 350)
+    floor = cluster.timeout("bench_slack_s", 900)
+    return int(workload.est_seconds * pct / 100) + floor
 
 
 def benchmark_job(cluster: Cluster, run: Run, workload: Workload) -> str:
     values = _common(cluster)
-    deadline = job_deadline(workload)
+    deadline = job_deadline(cluster, workload)
     values.update(
         {
             "JOB_NAME": job_name(run, workload),
