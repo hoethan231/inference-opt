@@ -15,6 +15,7 @@ CLUSTER_YAML = CLUSTER_DIR / "cluster.yaml"
 PARAMS_BASE_YAML = CLUSTER_DIR / "params-base.yaml"
 DEPLOYMENT_TEMPLATE = CLUSTER_DIR / "deployments" / "vllm.yaml"
 RESULTS_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "results-pvc.yaml"
+MODEL_CACHE_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "model-cache-pvc.yaml"
 BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark.yaml"
 PRESEED_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "preseed.yaml"
 
@@ -49,6 +50,7 @@ class Cluster:
     workloads_configmap: str
     hf_secret: str
     results_pvc: str
+    model_cache_pvc_storage: str
     results_mount: str
     model_mount: str
     gpu_rivals: list[dict[str, str]]

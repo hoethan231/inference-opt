@@ -1,0 +1,21 @@
+# =============================================================================
+# Shared model-weights cache PVC.
+#
+# Models reference this by name via `cache_pvc` in models/*.yaml. `bench` applies
+# this manifest during preflight so the server pod cannot get stuck Pending on a
+# missing claim.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: __MODEL_CACHE_PVC__
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/component: model-cache
+    app.kubernetes.io/part-of: inference-optimization-bench
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: __MODEL_CACHE_PVC_STORAGE__

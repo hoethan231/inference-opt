@@ -136,7 +136,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     print(f"# --- ConfigMap for {run.tag} ---")
     print(render.params_configmap(cluster, run))
     print(f"# --- Deployment + Service ({model.name}) ---")
-    print(render.deployment(cluster, model))
+    print(render.deployment(cluster, model, run))
     for workload in workload_registry.load_many(run.workloads):
         print(f"# --- benchmark Job: {workload.name} ---")
         print(render.benchmark_job(cluster, run, workload))
@@ -284,7 +284,9 @@ def cmd_models(args: argparse.Namespace) -> int:
     if args.preseed:
         model = model_registry.load(args.preseed)
         kube = kube_mod.Kube(settings.Cluster.load())
+        kube.ensure_namespace()
         kube.ensure_secret()
+        kube.ensure_model_cache_pvc(model)
         cached = kube.model_is_cached(model)
         if cached and not args.force:
             util.ok(f"{model.name} is already cached on {model.cache_pvc}")

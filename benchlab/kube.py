@@ -80,6 +80,33 @@ class Kube:
             )
         return proc.stdout
 
+    def _kubectl_cluster(
+        self,
+        args: list[str],
+        *,
+        stdin: str | None = None,
+        check: bool = True,
+        timeout: int | None = 300,
+    ) -> str:
+        """Run kubectl without forcing a namespace."""
+        cmd = ["kubectl", *args]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=stdin,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise KubectlError(f"timed out after {timeout}s: {' '.join(cmd)}") from None
+        if check and proc.returncode != 0:
+            raise KubectlError(
+                f"{' '.join(cmd)} failed ({proc.returncode}): "
+                f"{(proc.stderr or proc.stdout).strip()}"
+            )
+        return proc.stdout
+
     def apply(self, manifest: str, *, timeout: int = 300) -> None:
         self._kubectl(["apply", "-f", "-"], stdin=manifest, timeout=timeout)
 
@@ -99,6 +126,19 @@ class Kube:
         self._kubectl(args, check=False, timeout=300)
 
     # -- prerequisites ----------------------------------------------------
+    def ensure_namespace(self) -> None:
+        """Create the target namespace when it does not already exist."""
+        ns = self.cluster.namespace
+        existing = self.get_json("get", "namespace", ns)
+        if existing:
+            return
+        util.step(f"creating namespace {ns}")
+        out = self._kubectl_cluster(["create", "namespace", ns], check=False, timeout=60)
+        if "created" in out or "AlreadyExists" in out:
+            return
+        # One retry with strict checking surfaces the real error message.
+        self._kubectl_cluster(["create", "namespace", ns], check=True, timeout=60)
+
     def ensure_secret(self) -> None:
         token = os.environ.get("HF_TOKEN")
         name = self.cluster.hf_secret
@@ -127,6 +167,9 @@ class Kube:
 
     def ensure_results_pvc(self) -> None:
         self.apply(render.results_pvc(self.cluster))
+
+    def ensure_model_cache_pvc(self, model: Model) -> None:
+        self.apply(render.model_cache_pvc(self.cluster, model))
 
     def apply_params(self, run: Run) -> str:
         manifest = render.params_configmap(self.cluster, run)
@@ -223,7 +266,7 @@ class Kube:
         a pod that OOMed at startup crash-loops, so this polls the pod and bails
         out as soon as the log or the container state says it will never be Ready.
         """
-        self.apply(render.deployment(self.cluster, model))
+        self.apply(render.deployment(self.cluster, model, run))
         self._kubectl(["rollout", "restart", f"deployment/{self.cluster.deployment}"])
 
         deadline = time.time() + timeout_s

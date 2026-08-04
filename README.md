@@ -3,6 +3,7 @@
 One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
 Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
 different sizes, so they share one command, one results store and one report.
+
 # Inference optimization bench
 
 One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
@@ -26,12 +27,12 @@ A run is the same four steps the old `run.sh` did, in a loop, per config:
 
 1. **Render** the `vllm-params` ConfigMap for this config and apply it.
 2. **Refresh** the server — the Deployment is `strategy: Recreate`, so the old
-   pod releases the GPU before the new one starts — then wait until it is Ready
+  pod releases the GPU before the new one starts — then wait until it is Ready
    and answering, and record what the engine actually did (KV-cache blocks,
    resolved engine args, vLLM version).
 3. **Benchmark** it with each workload, as a Kubernetes Job.
 4. **Pull** the results off the PVC into `runs/<tag>/` and append one line to
-   `runs/index.jsonl`.
+  `runs/index.jsonl`.
 
 Nothing about that loop is hidden: `./bench render <experiment>` prints the exact
 manifests a run would apply, and applies nothing.
@@ -41,11 +42,13 @@ manifests a run would apply, and applies nothing.
 An experiment is one YAML file in `experiments/`. Its `strategy.kind` decides
 how many configs come out of it:
 
-| kind | configs | use it for |
-|---|---|---|
-| `single` | 1 | one config, e.g. a baseline or a candidate to confirm |
-| `ofat` | `sum(len(values) - 1) + 1` | finding each knob's best value on its own |
-| `grid` | product of the axes | proving a *combination*, once OFAT has narrowed it |
+
+| kind     | configs                    | use it for                                            |
+| -------- | -------------------------- | ----------------------------------------------------- |
+| `single` | 1                          | one config, e.g. a baseline or a candidate to confirm |
+| `ofat`   | `sum(len(values) - 1) + 1` | finding each knob's best value on its own             |
+| `grid`   | product of the axes        | proving a *combination*, once OFAT has narrowed it    |
+
 
 An axis usually names a ConfigMap key:
 
@@ -120,10 +123,13 @@ spec_decode_method: nemotron_h_mtp
 Switching an experiment to another model is one line (`model: laguna-s-2.1`). If
 its weights aren't on the cache volume yet, `bench run` notices and pre-seeds the
 download first (a Job on whichever node has the GPU — no hostname is hardcoded).
+If the model cache PVC does not exist yet, preflight creates it automatically
+from `cluster/deployments/model-cache-pvc.yaml`.
 Reports label each series with its model when more than one is in view, so
 cross-model comparison happens at report time rather than needing its own mode.
 
 ## Running
+
 | `single` | 1 | one config, e.g. a baseline or a candidate to confirm |
 | `ofat` | `sum(len(values) - 1) + 1` | finding each knob's best value on its own |
 | `grid` | product of the axes | proving a *combination*, once OFAT has narrowed it |
@@ -225,12 +231,14 @@ because it is usually a different question (a different workload, or a rerun);
 `--suffix rerun2` plots that group, `--all-suffixes` plots everything together.
 
 ## Reading the results
+
 ./bench run ofat-scheduler --dry-run          # the plan and the wall-clock estimate
 ./bench run ofat-scheduler                    # all of it
 ./bench run ofat-scheduler --only max_num_seqs  # one axis (matches tag, axis or value)
 ./bench run ofat-scheduler --resume           # carry on, skipping what already succeeded
 ./bench run baseline --workloads rate         # cheaper: one workload
 ./bench run ofat-scheduler --suffix rerun2    # same sweep, tags suffixed, nothing overwritten
+
 ```
 
 Safe to interrupt: every attempt is recorded, so `--resume` picks up exactly
@@ -302,6 +310,7 @@ append-only — a record is never rewritten, so retries and a killed sweep's
 history both stay visible, and readers take the last entry per tag.
 
 ## Cluster commands
+
 `doctor` catches a run recorded as successful whose result file is missing,
 truncated, or contains zero successful requests. `runs/index.jsonl` is
 append-only — a record is never rewritten, so retries and a killed sweep's
@@ -347,14 +356,16 @@ run.
 Everything lives in the `vllm-inf` **namespace**. You never talk to a machine
 directly; you declare **objects** and Kubernetes makes reality match them.
 
-| Object | What it is | Ours |
-|---|---|---|
-| **ConfigMap** | key/value settings injected as env vars | `vllm-params` (the knobs), `bench-workloads` (scenarios) |
-| **Secret** | a ConfigMap for sensitive values | `hf-token-secret` |
-| **PVC** | a network disk that outlives pods | `nemotron-model-cache` (weights), `vllm-sweep-results-pvc` (results) |
-| **Deployment** | keeps N copies of a pod running | `vllm-server` |
-| **Service** | a stable DNS name in front of pods | `vllm-svc` |
-| **Job** | a pod that runs once to completion | each benchmark, each pre-seed |
+
+| Object         | What it is                              | Ours                                                                 |
+| -------------- | --------------------------------------- | -------------------------------------------------------------------- |
+| **ConfigMap**  | key/value settings injected as env vars | `vllm-params` (the knobs), `bench-workloads` (scenarios)             |
+| **Secret**     | a ConfigMap for sensitive values        | `hf-token-secret`                                                    |
+| **PVC**        | a network disk that outlives pods       | `nemotron-model-cache` (weights), `vllm-sweep-results-pvc` (results) |
+| **Deployment** | keeps N copies of a pod running         | `vllm-server`                                                        |
+| **Service**    | a stable DNS name in front of pods      | `vllm-svc`                                                           |
+| **Job**        | a pod that runs once to completion      | each benchmark, each pre-seed                                        |
+
 
 A pod is isolated: it only sees settings you inject and disks you mount. That is
 why the token is a Secret and the weights are on a PVC.
@@ -375,17 +386,22 @@ work on the shared cluster. Never point these Jobs at the shared
 The Deployment turns ConfigMap keys into vLLM flags, so re-tuning never means
 editing the Deployment:
 
-| Key | vLLM flag |
-|---|---|
-| `MAX_MODEL_LEN` | `--max-model-len` — context window |
-| `MAX_NUM_SEQS` | `--max-num-seqs` — max concurrent running requests |
-| `MAX_NUM_BATCHED_TOKENS` | `--max-num-batched-tokens` — prefill chunk size |
-| `KV_CACHE_DTYPE` | `--kv-cache-dtype` — `fp8` roughly halves KV-cache size |
-| `GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization` |
-| `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` |
-| `BLOCK_SIZE` | `--block-size` |
+
+| Key                      | vLLM flag                                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAX_MODEL_LEN`          | `--max-model-len` — context window                                                                                                                                                                      |
+| `MAX_NUM_SEQS`           | `--max-num-seqs` — max concurrent running requests                                                                                                                                                      |
+| `MAX_NUM_BATCHED_TOKENS` | `--max-num-batched-tokens` — prefill chunk size                                                                                                                                                         |
+| `KV_CACHE_DTYPE`         | `--kv-cache-dtype` — `fp8` roughly halves KV-cache size                                                                                                                                                 |
+| `GPU_MEMORY_UTILIZATION` | `--gpu-memory-utilization`                                                                                                                                                                              |
+| `TENSOR_PARALLEL_SIZE`   | `--tensor-parallel-size`                                                                                                                                                                                |
+| `BLOCK_SIZE`             | `--block-size`                                                                                                                                                                                          |
 | `VLLM_ATTENTION_BACKEND` | `--attention-backend`; empty means auto-select. It is passed as a flag because vLLM ≥0.13 no longer reads it as an env var ([vllm-project/vllm#26315](https://github.com/vllm-project/vllm/pull/26315)) |
-| `EXTRA_ARGS` | appended verbatim — the escape hatch for everything else |
+| `EXTRA_ARGS`             | appended verbatim — the escape hatch for everything else                                                                                                                                                |
+
+
+The Deployment's `nvidia.com/gpu` request/limit is derived from
+`TENSOR_PARALLEL_SIZE` for each run, so TP=2 automatically requests 2 GPUs.
 
 `EXTRA_ARGS` is composed from the `extra_args` lists (base, then model, then
 experiment, then axis) and never set directly, which is how configs used to drift
@@ -399,11 +415,13 @@ shared prefixes, bursty prompt/output sizes, tool-heavy conversations). They
 differ in how load is applied — a workload's shape is read from the scenario's
 own `spec.profile.kind`, so adding one is just a `workloads/index.yaml` entry.
 
-| Name | Load | Time |
-|---|---|---|
-| `rate` | steady 20 req/s Poisson stream — behavior at fixed offered load | ~6 min |
-| `concurrent` | 8/16/32/64 busy users — how latency and throughput scale | ~20 min |
-| `decode-heavy` | short prompts, long generations — isolates decode from prefill | ~6 min |
+
+| Name           | Load                                                            | Time    |
+| -------------- | --------------------------------------------------------------- | ------- |
+| `rate`         | steady 20 req/s Poisson stream — behavior at fixed offered load | ~6 min  |
+| `concurrent`   | 8/16/32/64 busy users — how latency and throughput scale        | ~20 min |
+| `decode-heavy` | short prompts, long generations — isolates decode from prefill  | ~6 min  |
+
 
 ## Requirements
 
@@ -430,27 +448,35 @@ the store under `legacy-*` experiment names and still comparable:
 ./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95
 ```
 
-| Then | Now |
-|---|---|
-| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>` |
-| `sweep/grid.py` `SWEEP` list | `experiments/*.yaml` |
-| `config/grid.json` + `run_grid.py` | `strategy.kind: grid` |
-| `config/custom/*.yaml` one-offs | one `ofat` axis of presets (`feature-probes`) |
-| two manifests + `param: "grid"` | `runs/index.jsonl` |
-| `plot_results.py` / `plot_grid.py` + CSVs | `./bench report` |
-| `check_results.py --fix-manifest` | `./bench doctor --fix` |
-./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95
-```
 
-| Then | Now |
-|---|---|
-| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>` |
-| `sweep/grid.py` `SWEEP` list | `experiments/*.yaml` |
-| `config/grid.json` + `run_grid.py` | `strategy.kind: grid` |
-| `config/custom/*.yaml` one-offs | one `ofat` axis of presets (`feature-probes`) |
-| two manifests + `param: "grid"` | `runs/index.jsonl` |
-| `plot_results.py` / `plot_grid.py` + CSVs | `./bench report` |
-| `check_results.py --fix-manifest` | `./bench doctor --fix` |
+| Then                                                                    | Now                                           |
+| ----------------------------------------------------------------------- | --------------------------------------------- |
+| edit `config/vllm-params.yaml`, `./run.sh all both`                     | `./bench run <experiment>`                    |
+| `sweep/grid.py` `SWEEP` list                                            | `experiments/*.yaml`                          |
+| `config/grid.json` + `run_grid.py`                                      | `strategy.kind: grid`                         |
+| `config/custom/*.yaml` one-offs                                         | one `ofat` axis of presets (`feature-probes`) |
+| two manifests + `param: "grid"`                                         | `runs/index.jsonl`                            |
+| `plot_results.py` / `plot_grid.py` + CSVs                               | `./bench report`                              |
+| `check_results.py --fix-manifest`                                       | `./bench doctor --fix`                        |
+| ./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95 |                                               |
+| ```                                                                     |                                               |
+
+
+
+
+
+| Then                                                | Now                                           |
+| --------------------------------------------------- | --------------------------------------------- |
+| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>`                    |
+| `sweep/grid.py` `SWEEP` list                        | `experiments/*.yaml`                          |
+| `config/grid.json` + `run_grid.py`                  | `strategy.kind: grid`                         |
+| `config/custom/*.yaml` one-offs                     | one `ofat` axis of presets (`feature-probes`) |
+| two manifests + `param: "grid"`                     | `runs/index.jsonl`                            |
+| `plot_results.py` / `plot_grid.py` + CSVs           | `./bench report`                              |
+| `check_results.py --fix-manifest`                   | `./bench doctor --fix`                        |
+
+
+
 
 ## SGLang (later)
 

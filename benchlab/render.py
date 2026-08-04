@@ -88,12 +88,24 @@ def workloads_configmap(cluster: Cluster, workloads: list[Workload]) -> str:
     return yaml.safe_dump(manifest, default_flow_style=False, sort_keys=False, width=4096)
 
 
-def deployment(cluster: Cluster, model: Model) -> str:
+def _gpu_count(run: Run) -> int:
+    raw = run.params.get("TENSOR_PARALLEL_SIZE", "1")
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise SystemExit(f"invalid TENSOR_PARALLEL_SIZE={raw!r}; expected an integer >= 1")
+    if value < 1:
+        raise SystemExit(f"invalid TENSOR_PARALLEL_SIZE={value}; expected an integer >= 1")
+    return value
+
+
+def deployment(cluster: Cluster, model: Model, run: Run) -> str:
     values = _common(cluster)
     values.update(
         {
             "VLLM_IMAGE": model.image or cluster.image("vllm"),
             "MODEL_CACHE_PVC": model.cache_pvc,
+            "GPU_COUNT": str(_gpu_count(run)),
         }
     )
     return _substitute(settings.DEPLOYMENT_TEMPLATE, values)
@@ -101,6 +113,17 @@ def deployment(cluster: Cluster, model: Model) -> str:
 
 def results_pvc(cluster: Cluster) -> str:
     return _substitute(settings.RESULTS_PVC_TEMPLATE, _common(cluster))
+
+
+def model_cache_pvc(cluster: Cluster, model: Model) -> str:
+    values = _common(cluster)
+    values.update(
+        {
+            "MODEL_CACHE_PVC": model.cache_pvc,
+            "MODEL_CACHE_PVC_STORAGE": cluster.model_cache_pvc_storage,
+        }
+    )
+    return _substitute(settings.MODEL_CACHE_PVC_TEMPLATE, values)
 
 
 def job_name(run: Run, workload: Workload) -> str:

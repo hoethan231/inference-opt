@@ -6,9 +6,9 @@
 # The double-underscore names below are substituted from cluster/cluster.yaml and
 # the model registry; run `bench render <experiment>` to see the result.
 #
-# strategy: Recreate — there is one GPU, and the weights PVC is ReadWriteOnce,
-# so the old pod must be gone before the new one starts or the new pod waits
-# forever for a GPU the old one still holds.
+# strategy: Recreate — this cluster runs one benchmark engine at a time and the
+# weights PVC is ReadWriteOnce, so the old pod must be gone before the new one
+# starts or the new pod waits forever for attach/GPU resources.
 # =============================================================================
 
 apiVersion: apps/v1
@@ -70,13 +70,13 @@ spec:
               containerPort: 8000
           resources:
             requests:
-              nvidia.com/gpu: 1
+              nvidia.com/gpu: __GPU_COUNT__
               cpu: "8"
-              memory: 40Gi
+              memory: 22Gi
             limits:
-              nvidia.com/gpu: 1
+              nvidia.com/gpu: __GPU_COUNT__
               cpu: "8"
-              memory: 40Gi
+              memory: 22Gi
           volumeMounts:
             - name: model-cache
               mountPath: __MODEL_MOUNT__
