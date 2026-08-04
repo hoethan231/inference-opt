@@ -1,0 +1,17 @@
+# H100 TP2 baseline bucket for Laguna.
+#
+# Keeps H100-only transport/parallelism settings out of the shared model file.
+#
+#   ./bench run baseline-h100-tp2
+
+name: baseline-h100-tp2
+description: H100 TP2 baseline config, both workloads.
+bucket: h100-tp2
+model: laguna-s-2.1
+workloads: [rate, concurrent]
+params:
+  TENSOR_PARALLEL_SIZE: "2"
+  VLLM_FLASHINFER_ALLREDUCE_BACKEND: trtllm
+
+strategy:
+  kind: single

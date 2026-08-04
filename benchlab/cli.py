@@ -177,6 +177,15 @@ def cmd_report(args: argparse.Namespace) -> int:
             util.die(f"no runs to report for '{args.experiment}'.{hint}")
         title = args.experiment
         out_dir = settings.REPORTS_DIR / util.sanitize(args.experiment)
+        spec_path = spec.experiment_path(args.experiment)
+        if spec_path.exists():
+            exp_spec = spec.load(args.experiment)
+            if exp_spec.bucket:
+                group = exp_spec.name
+                bucket_suffix = f"-{exp_spec.bucket}"
+                if group.endswith(bucket_suffix):
+                    group = group[: -len(bucket_suffix)]
+                out_dir = settings.REPORTS_DIR / util.sanitize(exp_spec.bucket) / util.sanitize(group)
         if suffix:
             out_dir = out_dir / util.sanitize(suffix)
 
@@ -332,13 +341,14 @@ def cmd_models(args: argparse.Namespace) -> int:
         rows.append(
             [
                 experiment.name,
+                experiment.bucket or "-",
                 experiment.kind,
                 experiment.model,
                 len(runs),
                 util.human_duration(plan_mod.estimate_seconds(runs)),
             ]
         )
-    print(util.table(["name", "kind", "model", "configs", "≈ time"], rows))
+    print(util.table(["name", "bucket", "kind", "model", "configs", "≈ time"], rows))
     return 0
 
 

@@ -239,6 +239,54 @@ class Kube:
                     timeout=200,
                 )
 
+    def teardown_server(self, *, timeout_s: int = 300, force_after_s: int = 90) -> None:
+        """Reset our own server to a clean slate before a fresh deploy."""
+        util.step(f"tearing down any existing {self.cluster.deployment} pod(s)")
+        # Best effort: if the Deployment exists, scale it to zero first so the
+        # controller stops creating replacements while we clean up.
+        self._kubectl(
+            ["scale", "deployment", self.cluster.deployment, "--replicas=0"],
+            check=False,
+            timeout=60,
+        )
+
+        deadline = time.time() + timeout_s
+        force_deadline = time.time() + force_after_s
+        forced: set[str] = set()
+        while time.time() < deadline:
+            pods = self.get_json("get", "pods", "-l", f"app={self.cluster.app_label}").get(
+                "items", []
+            )
+            if not pods:
+                return
+
+            now = time.time()
+            for pod in pods:
+                name = pod.get("metadata", {}).get("name", "")
+                if not name:
+                    continue
+                deleting = bool(pod.get("metadata", {}).get("deletionTimestamp"))
+                if now >= force_deadline or deleting:
+                    if name not in forced:
+                        util.warn(f"force-deleting stale server pod {name}")
+                        forced.add(name)
+                    self.delete("pod", name, force=True, wait=False)
+                else:
+                    self.delete("pod", name, force=False, wait=False)
+            time.sleep(3)
+
+        leftovers = [
+            p.get("metadata", {}).get("name", "?")
+            for p in self.get_json("get", "pods", "-l", f"app={self.cluster.app_label}").get(
+                "items", []
+            )
+        ]
+        if leftovers:
+            raise KubectlError(
+                f"could not fully tear down {self.cluster.deployment} pods within "
+                f"{util.human_duration(timeout_s)}: {', '.join(leftovers)}"
+            )
+
     # -- the engine -------------------------------------------------------
     def server_pod(self) -> dict[str, Any] | None:
         pods = self.get_json(
@@ -266,6 +314,12 @@ class Kube:
         a pod that OOMed at startup crash-loops, so this polls the pod and bails
         out as soon as the log or the container state says it will never be Ready.
         """
+        self.teardown_server()
+        reclaim_delay_s = 20
+        util.step(
+            f"waiting {reclaim_delay_s}s for GPU memory to settle after teardown"
+        )
+        time.sleep(reclaim_delay_s)
         self.apply(render.deployment(self.cluster, model, run))
         self._kubectl(["rollout", "restart", f"deployment/{self.cluster.deployment}"])
 

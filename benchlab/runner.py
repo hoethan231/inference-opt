@@ -107,6 +107,11 @@ def _preflight(
     util.step(f"workloads loaded: {', '.join(w.name for w in workloads)}")
     if not options.preseed:
         return
+    # Pre-seed jobs run on the GPU node with substantial CPU/RAM requests.
+    # On smaller clusters an old crashlooping server can block scheduling, so
+    # free engine resources before cache probing/pre-seed.
+    kube.free_gpu()
+    kube.teardown_server()
     cached = kube.model_is_cached(model)
     if cached is False:
         util.step(f"{model.name} is not on {model.cache_pvc} yet")

@@ -66,6 +66,7 @@ class Experiment:
     extra_args: list[str]
     axes: list[Axis]
     description: str = ""
+    bucket: str = ""
     path: Path | None = None
 
     def resolved(self) -> tuple[dict[str, str], list[str], model_registry.Model]:
@@ -231,5 +232,6 @@ def load(name: str) -> Experiment:
         extra_args=[str(a) for a in (raw.get("extra_args") or [])],
         axes=axes,
         description=str(raw.get("description") or "").strip(),
+        bucket=str(raw.get("bucket") or "").strip(),
         path=path,
     )

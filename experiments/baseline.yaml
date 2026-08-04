@@ -5,7 +5,8 @@
 
 name: baseline
 description: Current default config, both workloads.
-model: laguna-s-2.1
+bucket: rtx6000-tp1
+model: laguna-s-2.1-prev-official
 workloads: [rate, concurrent]
 
 strategy:
