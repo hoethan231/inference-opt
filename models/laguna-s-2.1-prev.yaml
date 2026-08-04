@@ -1,0 +1,35 @@
+# =============================================================================
+# Laguna S 2.1 previous RTX6000 variant (historical 0804 checkpoint).
+# =============================================================================
+
+name: laguna-s-2.1-prev
+
+hf_repo: kkuspa/Laguna-S-2.1-NVFP4-0804
+
+# Shares the Nemotron cache volume: one RWO PVC on the single GPU node.
+cache_pvc: nemotron-model-cache
+
+image: vllm/vllm-openai:v0.26.0
+
+params:
+  MAX_MODEL_LEN: "32768"
+  MAX_NUM_SEQS: "32"
+  KV_CACHE_DTYPE: "fp8_e4m3"
+
+  # Cache FlashInfer's JIT kernels on the model volume so they survive pod
+  # restarts instead of being rebuilt on every deploy.
+  FLASHINFER_WORKSPACE_BASE: /models/flashinfer
+  MAX_JOBS: "4"
+
+  # hf_transfer trips over this repo's Xet-backed files; the Xet fast path
+  # works and is faster anyway.
+  HF_HUB_ENABLE_HF_TRANSFER: "0"
+  HF_XET_HIGH_PERFORMANCE: "1"
+
+  GPU_MEMORY_UTILIZATION: "0.9"
+
+extra_args:
+  - --trust-remote-code
+  - --enable-auto-tool-choice
+  - --tool-call-parser=poolside_v1
+  - --reasoning-parser=poolside_v1
