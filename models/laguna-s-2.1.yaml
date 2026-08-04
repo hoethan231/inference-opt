@@ -14,20 +14,12 @@ hf_repo: poolside/Laguna-S-2.1-NVFP4
 # Shares the Nemotron cache volume: one RWO PVC on the single GPU node.
 cache_pvc: nemotron-model-cache
 
-image: vllm/vllm-openai:v0.26.0
+image: vllm/vllm-openai:v0.23.0
 
 params:
   MAX_MODEL_LEN: "131072"
-
-  # Cache FlashInfer's JIT kernels on the model volume so they survive pod
-  # restarts instead of being rebuilt on every deploy.
   FLASHINFER_WORKSPACE_BASE: /models/flashinfer
   MAX_JOBS: "4"
-
-  # hf_transfer trips over this repo's Xet-backed files; the Xet fast path
-  # works and is faster anyway.
-  HF_HUB_ENABLE_HF_TRANSFER: "0"
-  HF_XET_HIGH_PERFORMANCE: "1"
 
 extra_args:
   - --trust-remote-code

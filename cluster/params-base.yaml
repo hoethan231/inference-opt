@@ -14,20 +14,12 @@
 params:
   PORT: "8000"
 
-  # HF cache lives on the model PVC so weights survive pod restarts.
   HF_HOME: /models/huggingface
-  HF_HUB_ENABLE_HF_TRANSFER: "1"
+  HF_XET_HIGH_PERFORMANCE: "1"
 
-  # Parallelism. TENSOR x PIPELINE x DATA is how many GPUs the engine pod
-  # requests, so these four keys decide the shape of the deployment and not just
-  # a flag: see benchlab/parallelism.py. Defaults are the single-GPU engine every
-  # run before July 2026 used, so an experiment that says nothing still measures
-  # what the older ones measured.
   TENSOR_PARALLEL_SIZE: "1"
   PIPELINE_PARALLEL_SIZE: "1"
   DATA_PARALLEL_SIZE: "1"
-  # MoE only, and only with more than one rank: spreads experts rather than
-  # sharding every tensor. 1 appends --enable-expert-parallel.
   EXPERT_PARALLEL: "0"
 
   # Hyperparameters. Models and experiments override these freely.
@@ -37,6 +29,6 @@ params:
   MAX_NUM_SEQS: "128"
   MAX_NUM_BATCHED_TOKENS: "2048"
   BLOCK_SIZE: "16"
-  VLLM_ATTENTION_BACKEND: "" # empty = let vLLM auto-select
+  VLLM_ATTENTION_BACKEND: ""
 
 extra_args: []

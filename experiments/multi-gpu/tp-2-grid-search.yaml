@@ -10,6 +10,6 @@ strategy:
   kind: grid
   axes:
     - key: MAX_NUM_SEQS
-      values: ["64", "128", "256"]
+      values: ["8", "16", "32", "64", "128"]
     - key: MAX_NUM_BATCHED_TOKENS
-      values: ["2048", "4096"]
+      values: ["16384", "32768", "65536", "131072"]
