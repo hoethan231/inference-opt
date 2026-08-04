@@ -27,6 +27,7 @@ hf_secret: hf-token-secret
 # can't fill up from — or be cleared alongside — other work on this cluster.
 results_pvc: vllm-sweep-results-pvc
 external_results_pvc: vllm-sweep-results-external-pvc
+model_cache_pvc_storage: 2000Gi
 
 # Where the Jobs mount the results volume, and where the engine mounts weights.
 results_mount: /app/results

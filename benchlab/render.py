@@ -114,6 +114,17 @@ def results_pvc(cluster: Cluster, *, pvc_name: str | None = None) -> str:
     return _substitute(settings.RESULTS_PVC_TEMPLATE, values)
 
 
+def model_cache_pvc(cluster: Cluster, model: Model) -> str:
+    values = _common(cluster)
+    values.update(
+        {
+            "MODEL_CACHE_PVC": model.cache_pvc,
+            "MODEL_CACHE_PVC_STORAGE": cluster.model_cache_pvc_storage,
+        }
+    )
+    return _substitute(settings.MODEL_CACHE_PVC_TEMPLATE, values)
+
+
 def job_name(run: Run, workload: Workload) -> str:
     return f"{run.tag}-{workload.code}"
 

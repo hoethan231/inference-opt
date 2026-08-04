@@ -36,6 +36,13 @@ params:
   DATA_PARALLEL_SIZE: "1"
   EXPERT_PARALLEL: "0"
 
+  GPU_MEMORY_UTILIZATION: "0.9"
+
+  TENSOR_PARALLEL_SIZE: "2"
+
+  VLLM_ATTENTION_BACKEND: TRITON_ATTN
+
+
 extra_args:
   - --trust-remote-code
   - --enable-prefix-caching
@@ -44,3 +51,6 @@ extra_args:
   - --enable-auto-tool-choice
   - --tool-call-parser=poolside_v1
   - --reasoning-parser=poolside_v1
+  - --disable-custom-all-reduce
+  - --attention-backend=TRITON_ATTN
+  # - --enforce-eager

@@ -230,7 +230,9 @@ def _preflight(
     kube: kube_mod.Kube, model: Model, workloads: list[Workload], options: Options
 ) -> None:
     util.log("preflight")
+    kube.ensure_namespace()
     kube.ensure_secret()
+    kube.ensure_model_cache_pvc(model)
     kube.ensure_results_pvc()
     # Workloads live in one shared ConfigMap; when runs happen in parallel,
     # writing only this run's subset can remove another run's scenario file.

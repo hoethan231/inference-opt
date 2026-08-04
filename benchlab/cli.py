@@ -546,7 +546,9 @@ def cmd_models(args: argparse.Namespace) -> int:
     if args.preseed:
         model = model_registry.load(args.preseed)
         kube = kube_mod.Kube(settings.Cluster.load())
+        kube.ensure_namespace()
         kube.ensure_secret()
+        kube.ensure_model_cache_pvc(model)
         cached = kube.model_is_cached(model)
         if cached and not args.force:
             util.ok(f"{model.name} is already cached on {model.cache_pvc}")

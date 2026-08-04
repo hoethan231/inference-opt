@@ -14,6 +14,7 @@ CLUSTER_DIR = REPO / "cluster"
 CLUSTER_YAML = CLUSTER_DIR / "cluster.yaml"
 DEPLOYMENT_TEMPLATE = CLUSTER_DIR / "deployments" / "vllm.yaml"
 RESULTS_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "results-pvc.yaml"
+MODEL_CACHE_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "model-cache-pvc.yaml"
 BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark.yaml"
 EXTERNAL_BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark-external.yaml"
 PRESEED_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "preseed.yaml"
@@ -52,6 +53,7 @@ class Cluster:
     hf_secret: str
     results_pvc: str
     external_results_pvc: str
+    model_cache_pvc_storage: str
     results_mount: str
     model_mount: str
     gpus_per_node: int

@@ -4,6 +4,12 @@ One tool — `./bench` — for measuring vLLM serving configurations on the clus
 Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
 different sizes, so they share one command, one results store and one report.
 
+# Inference optimization bench
+
+One tool — `./bench` — for measuring vLLM serving configurations on the cluster.
+Single runs, one-factor-at-a-time sweeps and grid searches are the same thing at
+different sizes, so they share one command, one results store and one report.
+
 ```bash
 export HF_TOKEN=hf_xxx              # first time only; creates the Secret
 
@@ -21,12 +27,12 @@ A run is the same four steps the old `run.sh` did, in a loop, per config:
 
 1. **Render** the `vllm-params` ConfigMap for this config and apply it.
 2. **Refresh** the server — the Deployment is `strategy: Recreate`, so the old
-   pod releases its GPUs before the new one starts — then wait until it is Ready
+  pod releases the GPU before the new one starts — then wait until it is Ready
    and answering, and record what the engine actually did (KV-cache blocks,
    resolved engine args, vLLM version).
 3. **Benchmark** it with each workload, as a Kubernetes Job.
 4. **Pull** the results off the PVC into `runs/<tag>/` and append one line to
-   `runs/index.jsonl`.
+  `runs/index.jsonl`.
 
 Nothing about that loop is hidden: `./bench render <experiment>` prints the exact
 manifests a run would apply, and applies nothing.
@@ -63,11 +69,13 @@ An experiment is one YAML file under `experiments/`, filed by how many GPUs it
 needs (`single-gpu/`, `multi-gpu/`). Its `strategy.kind` decides how many configs
 come out of it:
 
-| kind | configs | use it for |
-|---|---|---|
-| `single` | 1 | one config, e.g. a baseline or a candidate to confirm |
-| `ofat` | `sum(len(values) - 1) + 1` | finding each knob's best value on its own |
-| `grid` | product of the axes | proving a *combination*, once OFAT has narrowed it |
+
+| kind     | configs                    | use it for                                            |
+| -------- | -------------------------- | ----------------------------------------------------- |
+| `single` | 1                          | one config, e.g. a baseline or a candidate to confirm |
+| `ofat`   | `sum(len(values) - 1) + 1` | finding each knob's best value on its own             |
+| `grid`   | product of the axes        | proving a *combination*, once OFAT has narrowed it    |
+
 
 An axis usually names a ConfigMap key:
 
@@ -143,7 +151,91 @@ spec_decode_method: nemotron_h_mtp
 
 Switching an experiment to another model is one line (`model: laguna-s-2.1`). If
 its weights aren't on the cache volume yet, `bench run` notices and pre-seeds the
-download first (a Job on whichever node has the GPUs — no hostname is hardcoded).
+download first (a Job on whichever node has the GPU — no hostname is hardcoded).
+If the model cache PVC does not exist yet, preflight creates it automatically
+from `cluster/deployments/model-cache-pvc.yaml`.
+Reports label each series with its model when more than one is in view, so
+cross-model comparison happens at report time rather than needing its own mode.
+
+## Running
+
+| `single` | 1 | one config, e.g. a baseline or a candidate to confirm |
+| `ofat` | `sum(len(values) - 1) + 1` | finding each knob's best value on its own |
+| `grid` | product of the axes | proving a *combination*, once OFAT has narrowed it |
+
+An axis usually names a ConfigMap key:
+
+```yaml
+name: ofat-scheduler
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: ofat
+  axes:
+    - key: MAX_NUM_SEQS
+      note: max concurrent running sequences — the scheduler's bouncer
+      values: ["32", "64", "128", "256"]
+```
+
+...but a value can change several things at once, or append a flag instead of
+setting a key — which is how speculative decoding, kernel probes and anything
+else without its own ConfigMap key are expressed:
+
+```yaml
+    - param: spec_tokens
+      abbrev: mtp
+      extra_args: >-
+        --speculative-config={{"method":"{spec_decode_method}","num_speculative_tokens":{value}}}
+      values: ["3", "4", "5"]
+
+    - param: feature
+      values:
+        - label: cutlass-moe
+          params: {MAX_NUM_SEQS: "256"}
+          extra_args: --moe-backend=flashinfer_cutlass
+```
+
+`{spec_decode_method}` and `{hf_repo}` come from the model registry, so pointing
+the experiment at another model picks up that model's method rather than
+hardcoding one. `abbrev:` fixes how the axis appears in tags
+(`spec-decode-mtp-5`); without it a tag spells the axis out and only falls back
+to an abbreviation when it would otherwise exceed the Kubernetes name limit.
+The shipped experiments are `baseline`, `ofat-scheduler`,
+`grid-scheduler`, `spec-decode`, `feature-probes` and `laguna-grid`; each one's
+header comment explains what it is for.
+
+### Where a config's values come from
+
+Lowest precedence to highest:
+
+```
+cluster/params-base.yaml  <  models/<model>.yaml  <  experiments/<exp>.yaml  <  the axis value
+```
+
+Model identity (`MODEL_NAME`, `SERVED_MODEL_NAME`) is applied last and can't be
+set by an experiment, so an experiment can never quietly serve a different
+checkpoint than the one in its `model:` field.
+
+## Multiple models
+
+A model file owns everything model-specific — weights, cache volume, image, the
+parser flags its chat template needs, and defaults for knobs whose ceiling is
+model-dependent:
+
+```yaml
+name: nemotron-3-super-120b
+hf_repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+cache_pvc: nemotron-model-cache
+params:
+  MAX_MODEL_LEN: "262144"
+extra_args: [--trust-remote-code, --tool-call-parser=qwen3_coder]
+spec_decode_method: nemotron_h_mtp
+```
+
+Switching an experiment to another model is one line (`model: laguna-s-2.1`). If
+its weights aren't on the cache volume yet, `bench run` notices and pre-seeds the
+download first (a Job on whichever node has the GPU — no hostname is hardcoded).
 Reports label each series with its model when more than one is in view, so
 cross-model comparison happens at report time rather than needing its own mode.
 
@@ -181,6 +273,15 @@ apikey: sk-...
 workloads: [rate, concurrent]
 runs:
   - mns-64-mnbt-1024
+## Reading the results
+
+./bench run ofat-scheduler --dry-run          # the plan and the wall-clock estimate
+./bench run ofat-scheduler                    # all of it
+./bench run ofat-scheduler --only max_num_seqs  # one axis (matches tag, axis or value)
+./bench run ofat-scheduler --resume           # carry on, skipping what already succeeded
+./bench run baseline --workloads rate         # cheaper: one workload
+./bench run ofat-scheduler --suffix rerun2    # same sweep, tags suffixed, nothing overwritten
+
 ```
 
 Run it:
@@ -300,6 +401,13 @@ history both stay visible, and readers take the last entry per tag.
 
 ## Cluster commands
 
+`doctor` catches a run recorded as successful whose result file is missing,
+truncated, or contains zero successful requests. `runs/index.jsonl` is
+append-only — a record is never rewritten, so retries and a killed sweep's
+history both stay visible, and readers take the last entry per tag.
+
+## Cluster commands
+
 ```bash
 ./bench status            # server, GPUs, benchmark jobs, recent runs
 ./bench pull [tag]        # raw files off the results PVC
@@ -339,14 +447,16 @@ run.
 Everything lives in the `vllm-inf` **namespace**. You never talk to a machine
 directly; you declare **objects** and Kubernetes makes reality match them.
 
-| Object | What it is | Ours |
-|---|---|---|
-| **ConfigMap** | key/value settings injected as env vars | `vllm-params` (the knobs), `bench-workloads` (scenarios) |
-| **Secret** | a ConfigMap for sensitive values | `hf-token-secret` |
-| **PVC** | a network disk that outlives pods | `nemotron-model-cache` (weights), `vllm-sweep-results-pvc` (results) |
-| **Deployment** | keeps N copies of a pod running | `vllm-server` |
-| **Service** | a stable DNS name in front of pods | `vllm-svc` |
-| **Job** | a pod that runs once to completion | each benchmark, each pre-seed |
+
+| Object         | What it is                              | Ours                                                                 |
+| -------------- | --------------------------------------- | -------------------------------------------------------------------- |
+| **ConfigMap**  | key/value settings injected as env vars | `vllm-params` (the knobs), `bench-workloads` (scenarios)             |
+| **Secret**     | a ConfigMap for sensitive values        | `hf-token-secret`                                                    |
+| **PVC**        | a network disk that outlives pods       | `nemotron-model-cache` (weights), `vllm-sweep-results-pvc` (results) |
+| **Deployment** | keeps N copies of a pod running         | `vllm-server`                                                        |
+| **Service**    | a stable DNS name in front of pods      | `vllm-svc`                                                           |
+| **Job**        | a pod that runs once to completion      | each benchmark, each pre-seed                                        |
+
 
 A pod is isolated: it only sees settings you inject and disks you mount. That is
 why the token is a Secret and the weights are on a PVC.
@@ -429,11 +539,13 @@ shared prefixes, bursty prompt/output sizes, tool-heavy conversations). They
 differ in how load is applied — a workload's shape is read from the scenario's
 own `spec.profile.kind`, so adding one is just a `workloads/index.yaml` entry.
 
-| Name | Load | Time |
-|---|---|---|
-| `rate` | steady 20 req/s Poisson stream — behavior at fixed offered load | ~6 min |
-| `concurrent` | 8/16/32/64 busy users — how latency and throughput scale | ~20 min |
-| `decode-heavy` | short prompts, long generations — isolates decode from prefill | ~6 min |
+
+| Name           | Load                                                            | Time    |
+| -------------- | --------------------------------------------------------------- | ------- |
+| `rate`         | steady 20 req/s Poisson stream — behavior at fixed offered load | ~6 min  |
+| `concurrent`   | 8/16/32/64 busy users — how latency and throughput scale        | ~20 min |
+| `decode-heavy` | short prompts, long generations — isolates decode from prefill  | ~6 min  |
+
 
 ## Requirements
 
@@ -463,20 +575,45 @@ the store under `legacy-*` experiment names and still comparable:
 ./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95
 ```
 
-| Then | Now |
-|---|---|
-| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>` |
-| `sweep/grid.py` `SWEEP` list | `experiments/**/*.yaml` |
-| `config/grid.json` + `run_grid.py` | `strategy.kind: grid` |
-| `config/custom/*.yaml` one-offs | one `ofat` axis of presets (`feature-probes`) |
-| two manifests + `param: "grid"` | `runs/index.jsonl` |
-| `plot_results.py` / `plot_grid.py` + CSVs | `./bench report` |
-| `check_results.py --fix-manifest` | `./bench doctor --fix` |
+
+| Then                                                                    | Now                                           |
+| ----------------------------------------------------------------------- | --------------------------------------------- |
+| edit `config/vllm-params.yaml`, `./run.sh all both`                     | `./bench run <experiment>`                    |
+| `sweep/grid.py` `SWEEP` list                                            | `experiments/*.yaml`                          |
+| `config/grid.json` + `run_grid.py`                                      | `strategy.kind: grid`                         |
+| `config/custom/*.yaml` one-offs                                         | one `ofat` axis of presets (`feature-probes`) |
+| two manifests + `param: "grid"`                                         | `runs/index.jsonl`                            |
+| `plot_results.py` / `plot_grid.py` + CSVs                               | `./bench report`                              |
+| `check_results.py --fix-manifest`                                       | `./bench doctor --fix`                        |
+| ./bench compare gpu-memory-utilization-0-85 gpu-memory-utilization-0-95 |                                               |
+| ```                                                                     |                                               |
+
+
+
+
+
+| Then                                                | Now                                           |
+| --------------------------------------------------- | --------------------------------------------- |
+| edit `config/vllm-params.yaml`, `./run.sh all both` | `./bench run <experiment>`                    |
+| `sweep/grid.py` `SWEEP` list                        | `experiments/*.yaml`                          |
+| `config/grid.json` + `run_grid.py`                  | `strategy.kind: grid`                         |
+| `config/custom/*.yaml` one-offs                     | one `ofat` axis of presets (`feature-probes`) |
+| two manifests + `param: "grid"`                     | `runs/index.jsonl`                            |
+| `plot_results.py` / `plot_grid.py` + CSVs           | `./bench report`                              |
+| `check_results.py --fix-manifest`                   | `./bench doctor --fix`                        |
+
+
+
 
 ## SGLang (later)
 
 Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPUs and cache
 PVC) behind its own Service, with `--model-path` / `--chunked-prefill-size` /
-`--max-running-requests` instead of the vLLM flags. You would still run one engine
-at a time, for the host-memory reason above; the benchmark Jobs point at whichever
-Service is live.
+`--max-running-requests` instead of the vLLM flags. Because of the single-GPU
+rule you would still run one engine at a time; the benchmark Jobs point at
+whichever Service is live.
+Symmetric to vLLM: a second Deployment (`strategy: Recreate`, same GPU and cache
+PVC) behind its own Service, with `--model-path` / `--chunked-prefill-size` /
+`--max-running-requests` instead of the vLLM flags. Because of the single-GPU
+rule you would still run one engine at a time; the benchmark Jobs point at
+whichever Service is live.
