@@ -1,5 +1,5 @@
 # =============================================================================
-# Poolside Laguna S 2.1 (official NVFP4 identity).
+# Poolside Laguna S 2.1 NVFP4 (official NVFP4 identity).
 #
 # Everything here used to live in `base_overrides` inside config/laguna-grid.json,
 # which meant the model was invisible to the results index and the plots — you
@@ -7,7 +7,7 @@
 # had actually measured.
 # =============================================================================
 
-name: laguna-s-2.1
+name: laguna-s-2.1-nvfp4
 
 hf_repo: poolside/Laguna-S-2.1-NVFP4
 

@@ -15,7 +15,7 @@
 
 name: ofat-scheduler
 description: OFAT sweep of scheduler, memory and attention knobs.
-model: laguna-s-2.1-prev-official
+model: laguna-s-2.1-nvfp4-prev-official
 workloads: [rate, concurrent]
 
 strategy:
