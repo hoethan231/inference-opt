@@ -162,6 +162,7 @@ def preseed_job(cluster: Cluster, model: Model, node: str) -> str:
             "MODEL_LABEL": model.name[:63],
             "VLLM_IMAGE": model.image or cluster.image("vllm"),
             "HF_REPO": model.hf_repo,
+            "HF_REVISION": model.revision or "",
             "HF_HOME": f"{cluster.model_mount}/huggingface",
             "MODEL_CACHE_PVC": model.cache_pvc,
             "NODE": node,

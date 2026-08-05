@@ -11,6 +11,8 @@ cache_pvc: nemotron-model-cache
 
 image: vllm/vllm-openai:v0.26.0
 
+revision: "07614121b3"
+
 params:
 
   # Cache FlashInfer's JIT kernels on the model volume so they survive pod
@@ -27,7 +29,13 @@ params:
 
 extra_args:
   - --trust-remote-code
-  - --revision=RC1
+  - --speculative-config '{"method":"dflash","model":"poolside/Laguna-S-2.1-DFlash-NVFP4","num_speculative_tokens":15}'
+  - --revision="07614121b3"
   - --enable-auto-tool-choice
+  - --enable-prefix-caching
+  - --enable-chunked-prefill
+  - --enable-prompt-tokens-details
   - --tool-call-parser=poolside_v1
   - --reasoning-parser=poolside_v1
+
+

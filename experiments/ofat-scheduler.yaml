@@ -15,7 +15,7 @@
 
 name: ofat-scheduler
 description: OFAT sweep of scheduler, memory and attention knobs.
-model: nemotron-3-super-120b
+model: laguna-s-2.1-prev-official
 workloads: [rate, concurrent]
 
 strategy:

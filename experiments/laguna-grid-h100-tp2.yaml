@@ -8,7 +8,7 @@
 name: laguna-grid-h100-tp2
 description: Scheduler grid for Laguna S 2.1 on H100 TP2.
 bucket: h100-tp2
-model: laguna-s-2.1
+model: laguna-s-2.1-fp8
 workloads: [rate, concurrent]
 params:
   TENSOR_PARALLEL_SIZE: "2"

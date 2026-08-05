@@ -50,13 +50,20 @@ spec:
               value: "1"
             - name: MODEL
               value: __HF_REPO__
+            - name: REVISION
+              value: __HF_REVISION__
           command: ["/bin/bash", "-c"]
           args:
             - |
               set -euo pipefail
               echo "Pre-seeding ${MODEL} into ${HF_HOME}"
               df -h __MODEL_MOUNT__
-              time hf download "${MODEL}"
+              if [ -n "${REVISION:-}" ]; then
+                echo "Using revision ${REVISION}"
+                time hf download "${MODEL}" --revision "${REVISION}"
+              else
+                time hf download "${MODEL}"
+              fi
               echo "--- done; volume now: ---"
               df -h __MODEL_MOUNT__
               du -sh "${HF_HOME}/hub"/* 2>/dev/null || true
