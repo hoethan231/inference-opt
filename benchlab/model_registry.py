@@ -18,6 +18,7 @@ class Model:
     cache_pvc: str
     params: dict[str, str]
     extra_args: list[str]
+    revision: str | None = None
     image: str | None = None
     spec_decode_method: str | None = None
     note: str = ""
@@ -64,12 +65,21 @@ def load(name: str) -> Model:
 
     params = {k: str(v) for k, v in (raw.get("params") or {}).items()}
     extra_args = [str(a) for a in (raw.get("extra_args") or [])]
+    revision = str(raw.get("revision") or "").strip() or None
+    if not revision:
+        for arg in extra_args:
+            if arg.startswith("--revision="):
+                value = arg.split("=", 1)[1].strip()
+                if value:
+                    revision = value
+                    break
     return Model(
         name=str(raw.get("name") or path.stem),
         hf_repo=str(raw["hf_repo"]),
         cache_pvc=str(raw["cache_pvc"]),
         params=params,
         extra_args=extra_args,
+        revision=revision,
         image=raw.get("image"),
         spec_decode_method=raw.get("spec_decode_method"),
         note=str(raw.get("note") or ""),

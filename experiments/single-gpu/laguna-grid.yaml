@@ -2,7 +2,7 @@
 #
 # Note what isn't here: no MODEL_NAME, no tool-call or reasoning parser, no HF
 # transfer flags, no context-length ceiling. All of that belongs to the model and
-# lives in models/laguna-s-2.1.yaml, so this file is only the search.
+# lives in models/laguna-s-2.1.yaml (official NVFP4 identity), so this file is only the search.
 #
 #   ./bench run laguna-grid
 #   ./bench report laguna-grid

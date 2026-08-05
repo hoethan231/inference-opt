@@ -534,8 +534,10 @@ class Kube:
             "print('OK', served)\n"
         )
         try:
-            proc = self._run(
-                ["exec", name, "--", "python3", "-c", script], timeout=timeout_s
+            out = self._kubectl(
+                ["exec", name, "--", "python3", "-c", script],
+                check=True,
+                timeout=timeout_s,
             )
         except KubectlError as exc:
             return False, str(exc)
@@ -856,6 +858,17 @@ class Kube:
             return None
         try:
             hub = f"{self.cluster.model_mount}/huggingface/hub/{model.cache_dir_name}"
+            revision = (model.revision or "").strip()
+            if revision:
+                # HF cache records named refs under refs/<name>, each pointing to
+                # a snapshot hash directory under snapshots/<commit>.
+                check_cmd = (
+                    f"ref_file={hub}/refs/{revision}; "
+                    f"[ -f \"$ref_file\" ] && ref=$(cat \"$ref_file\") && "
+                    f"[ -d {hub}/snapshots/$ref ] && echo \"$ref\" || true"
+                )
+            else:
+                check_cmd = f"[ -d {hub} ] && ls {hub}/snapshots 2>/dev/null | head -1 || true"
             out = self._kubectl(
                 [
                     "exec",
@@ -863,7 +876,7 @@ class Kube:
                     "--",
                     "sh",
                     "-c",
-                    f"[ -d {hub} ] && ls {hub}/snapshots 2>/dev/null | head -1 || true",
+                    check_cmd,
                 ],
                 check=False,
             )

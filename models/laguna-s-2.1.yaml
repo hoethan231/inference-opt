@@ -1,5 +1,5 @@
 # =============================================================================
-# Poolside Laguna S 2.1 (FP8 -- natively supported by H100).
+# Poolside Laguna S 2.1 (official NVFP4 identity).
 #
 # Everything here used to live in `base_overrides` inside config/laguna-grid.json,
 # which meant the model was invisible to the results index and the plots — you
@@ -9,7 +9,7 @@
 
 name: laguna-s-2.1
 
-hf_repo: poolside/Laguna-S-2.1-FP8
+hf_repo: poolside/Laguna-S-2.1-NVFP4
 
 # Shares the Nemotron cache volume: one RWO PVC on the single GPU node.
 cache_pvc: nemotron-model-cache
