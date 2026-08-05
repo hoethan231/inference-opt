@@ -1,19 +1,20 @@
 # =============================================================================
-# Laguna S 2.1 previous official release pinned to HF revision RC1.
+# Laguna S 2.1 NVFP4 previous RTX6000 variant (historical 0804 checkpoint).
 # =============================================================================
 
-name: laguna-s-2.1-prev-official
+name: laguna-s-2.1-nvfp4-prev
 
-hf_repo: poolside/Laguna-S-2.1-NVFP4
+hf_repo: kkuspa/Laguna-S-2.1-NVFP4-0804
 
 # Shares the Nemotron cache volume: one RWO PVC on the single GPU node.
 cache_pvc: nemotron-model-cache
 
 image: vllm/vllm-openai:v0.26.0
 
-revision: "07614121b3"
-
 params:
+  MAX_MODEL_LEN: "32768"
+  MAX_NUM_SEQS: "32"
+  KV_CACHE_DTYPE: "fp8_e4m3"
 
   # Cache FlashInfer's JIT kernels on the model volume so they survive pod
   # restarts instead of being rebuilt on every deploy.
@@ -29,13 +30,9 @@ params:
 
 extra_args:
   - --trust-remote-code
-  - --speculative-config '{"method":"dflash","model":"poolside/Laguna-S-2.1-DFlash-NVFP4","num_speculative_tokens":15}'
-  - --revision="07614121b3"
   - --enable-auto-tool-choice
   - --enable-prefix-caching
   - --enable-chunked-prefill
   - --enable-prompt-tokens-details
   - --tool-call-parser=poolside_v1
   - --reasoning-parser=poolside_v1
-
-

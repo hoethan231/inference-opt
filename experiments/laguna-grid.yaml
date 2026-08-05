@@ -11,7 +11,7 @@
 name: laguna-grid
 description: Scheduler grid for Laguna S 2.1.
 bucket: rtx6000-tp1
-model: laguna-s-2.1
+model: laguna-s-2.1-nvfp4-prev-official
 workloads: [rate, concurrent]
 
 strategy:
