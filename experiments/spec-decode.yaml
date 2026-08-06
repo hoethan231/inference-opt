@@ -20,9 +20,11 @@
 # MAX_NUM_SEQS or GPU_MEMORY_UTILIZATION for it.
 
 name: spec-decode
-description: Multi-Token Prediction speculative decoding, 3/4/5 tokens.
-model: nemotron-3-super-120b
+description: Multi-Token Prediction speculative decoding, 0-18 tokens.
+model: laguna-s-2.1-nvfp4-prev-official
 workloads: [rate, concurrent]
+params:
+  MAX_NUM_BATCHED_TOKENS: "8192"
 
 strategy:
   kind: ofat
@@ -33,6 +35,6 @@ strategy:
       # Deliberately space-free JSON: harmless now that the Deployment splits
       # EXTRA_ARGS with `eval set --`, but it keeps the flag readable in logs.
       extra_args: >-
-        --speculative-config={{"method":"{spec_decode_method}","num_speculative_tokens":{value}}}
-        --max-cudagraph-capture-size=128
-      values: ["3", "4", "5"]
+        - --speculative-config '{"method":"dflash","model":"poolside/Laguna-S-2.1-DFlash-NVFP4","num_speculative_tokens":{value}}'
+        - --max-cudagraph-capture-size=256
+      values: ["0", "3", "5", "8", "11", "15", "18"]
