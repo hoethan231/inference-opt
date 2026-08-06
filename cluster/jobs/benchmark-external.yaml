@@ -56,12 +56,15 @@ spec:
             - |
               set -euo pipefail
               python3 - <<'PY'
-              import json
+              import json, os
               with open("/workloads/__SCENARIO_FILE__") as f:
                   scenario = json.load(f)
               backend = scenario.setdefault("spec", {}).setdefault("backend", {})
               backend["target"] = "https://10.160.7.93/enterpriseai"
               backend["request_format"] = "/v1/chat/completions"
+              backend["validate_backend"] = False
+              backend["model"] = "__OPENAI_MODEL__"
+              backend["api_key"] = os.environ.get("OPENAI_API_KEY", "")
               backend.setdefault("extras", {}).setdefault("body", {})["model"] = "__OPENAI_MODEL__"
               with open("/tmp/scenario.json", "w") as f:
                   json.dump(scenario, f)

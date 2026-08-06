@@ -455,7 +455,8 @@ def _build_external_run(
     params.update(model.identity_params())
     if request_model:
         # External gateways often expose model IDs unrelated to our local registry.
-        params["MODEL_NAME"] = request_model
+        # Only override SERVED_MODEL_NAME (the name sent in API requests).
+        # MODEL_NAME must stay as the HF repo so the tokenizer can load it.
         params["SERVED_MODEL_NAME"] = request_model
     extra_args = [str(a) for a in (parsed.get("extra_args") or [])] + model.extra_args
     params["EXTRA_ARGS"] = " ".join(a for a in extra_args if a).strip()
