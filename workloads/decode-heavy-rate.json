@@ -24,7 +24,7 @@
             "rate": [
                 20.0
             ],
-            "max_concurrency": 256,
+            "max_concurrency": 64,
             "rampup_duration": 30.0,
             "warmup": 30.0
         },
