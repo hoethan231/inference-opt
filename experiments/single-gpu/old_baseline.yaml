@@ -1,0 +1,10 @@
+name: no-prefix-caching
+description: Disable prefix caching.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: single
+
+extra_args:
+  - --no-enable-prefix-caching
