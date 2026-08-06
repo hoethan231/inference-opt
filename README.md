@@ -156,11 +156,75 @@ cross-model comparison happens at report time rather than needing its own mode.
 ./bench run ofat-scheduler --resume           # carry on, skipping what already succeeded
 ./bench run baseline --workloads rate         # cheaper: one workload
 ./bench run ofat-scheduler --suffix rerun2    # same sweep, tags suffixed, nothing overwritten
+./bench run external/example
 ```
 
 Safe to interrupt: every attempt is recorded, so `--resume` picks up exactly
 what is left. A config that fails is retried once with a fresh deploy — except
 when it failed because it cannot fit in memory, which retrying cannot fix.
+
+### Sweeping externally hosted endpoints
+
+When the model is served outside this cluster (for example an enterprise-hosted
+OpenAI-compatible endpoint), define an external manifest under
+`experiments/external/`. Anything in that directory runs in external mode
+automatically (no `--external` flag needed).
+
+Example (one file per run), `experiments/external/mns-64-mnbt-1024.yaml`:
+
+```yaml
+name: external
+model: nemotron-3-super-120b
+request_model: nemotr-super-nvfp4
+endpoint: https://host/v1/chat/completions
+apikey: sk-...
+workloads: [rate, concurrent]
+runs:
+  - mns-64-mnbt-1024
+```
+
+Run it:
+
+```bash
+./bench run external/mns-64-mnbt-1024
+```
+
+Repeat with one manifest per config after you manually restart/reconfigure the
+external server for the next point.
+
+By convention, external names are `param-val-param-val` (for example
+`mns-64-mnbt-1024`). Reports parse these tags into per-axis views automatically.
+
+External runs are stored under `runs/<tag>/` like all other runs; their tags
+start with `external-` so they are easy to distinguish.
+
+`model` must be one of this repo's local model registry files under `models/`.
+For externally hosted gateways where the request `"model"` differs, set
+`request_model` (or `served_model`) to the remote model ID.
+
+External experiments use a dedicated benchmark Job template
+(`cluster/jobs/benchmark-external.yaml`) that is hardcoded for the NAI endpoint
+shape used here (`https://10.160.7.93/enterpriseai/v1/chat/completions`), and
+injects your `request_model` into the request body.
+
+Manifest endpoint is reused for all runs in that file. You can still override
+the API key at runtime:
+
+```bash
+./bench run external/mns-64-mnbt-1024 --external-api-key "$OPENAI_API_KEY"
+```
+
+To plot all external runs together (overview/frontier + per-axis sweep detail):
+
+```bash
+./bench report external
+```
+
+### Running local and external at once
+
+Yes. You can run a normal in-cluster sweep and an external manifest run in
+parallel (separate terminals). Benchmark Jobs no longer read model identity
+from the shared params ConfigMap, which avoids cross-run tokenizer/model races.
 
 `--suffix rerun2` turns `max-num-seqs-256` into `max-num-seqs-256-rerun2`.
 Reports treat a suffix as a separate group and keep it out of the default view,

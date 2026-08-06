@@ -494,8 +494,15 @@ class Kube:
             sink.close()
 
     # -- benchmark jobs ---------------------------------------------------
-    def reap_stale_bench_pods(self) -> None:
-        pods = self.get_json("get", "pods", "-l", "app=guidellm").get("items", [])
+    def reap_stale_bench_pods(self, run_tag: str) -> None:
+        """Clear only this run's non-terminal benchmark pods.
+
+        Different sweeps can run in parallel; deleting every live `app=guidellm`
+        pod would kill another run's in-flight workload.
+        """
+        pods = self.get_json(
+            "get", "pods", "-l", f"app=guidellm,bench.tag={run_tag}"
+        ).get("items", [])
         stale = [
             p["metadata"]["name"]
             for p in pods
@@ -506,12 +513,21 @@ class Kube:
             self.delete("pod", name, force=True, wait=False)
 
     def run_benchmark(
-        self, run: Run, workload: Workload, log_path: Path, *, echo: bool = True
+        self,
+        run: Run,
+        workload: Workload,
+        log_path: Path,
+        *,
+        echo: bool = True,
+        service_url: str | None = None,
+        api_key: str | None = None,
     ) -> JobOutcome:
         name = render.job_name(run, workload)
-        manifest = render.benchmark_job(self.cluster, run, workload)
+        manifest = render.benchmark_job(
+            self.cluster, run, workload, service_url=service_url, api_key=api_key
+        )
         util.step(f"workload '{workload.name}' -> job/{name}")
-        self.reap_stale_bench_pods()
+        self.reap_stale_bench_pods(run.tag)
         self.delete("job", name, wait=True)
         self.apply(manifest)
 

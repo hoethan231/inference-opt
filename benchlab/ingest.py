@@ -182,7 +182,16 @@ def _record_fields(record: RunRecord) -> dict[str, Any]:
         "status": record.status,
         "topology": record.topology.label,
         "gpus": record.topology.gpus,
+        "derived_axis": False,
     }
+
+
+def _external_axes_from_tag(tag: str) -> list[tuple[str, str]]:
+    """Parse external tag convention: param-val-param-val."""
+    parts = [p for p in str(tag).split("-") if p]
+    if len(parts) < 2 or len(parts) % 2 != 0:
+        return []
+    return [(parts[i], parts[i + 1]) for i in range(0, len(parts), 2)]
 
 
 # Columns that qualify a measurement rather than describe it: two runs sharing an
@@ -214,6 +223,14 @@ def frame(records: list[RunRecord], *, quiet: bool = False, refresh: bool = Fals
             continue
         fields = _record_fields(record)
         rows.extend({**fields, **measurement} for measurement in measurements)
+        if record.experiment == "external":
+            for axis, value in _external_axes_from_tag(record.tag):
+                derived = dict(fields)
+                derived["param"] = axis
+                derived["value"] = value
+                derived["label"] = f"{axis}={value}"
+                derived["derived_axis"] = True
+                rows.extend({**derived, **measurement} for measurement in measurements)
 
     if missing and not quiet:
         util.warn(f"{len(missing)} run(s) have no usable results yet: {', '.join(missing[:6])}")

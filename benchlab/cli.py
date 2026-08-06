@@ -102,6 +102,31 @@ def _add_run_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="don't echo benchmark output (it is still written to the run directory)",
     )
+    parser.add_argument(
+        "--external",
+        action="store_true",
+        help="benchmark externally hosted OpenAI-compatible endpoints instead of "
+        "deploying the in-cluster vLLM server",
+    )
+    parser.add_argument(
+        "--external-endpoint",
+        help="default endpoint URL for --external runs "
+        "(for example https://host/v1/chat/completions)",
+    )
+    parser.add_argument(
+        "--external-model",
+        help="model registry name for --external ad-hoc runs "
+        "(used for tokenizer/model identity in benchmark jobs)",
+    )
+    parser.add_argument(
+        "--external-api-key",
+        help="API key for OpenAI-compatible external endpoint benchmark jobs",
+    )
+    parser.add_argument(
+        "--no-prompt-endpoint",
+        action="store_true",
+        help="in --external mode, do not prompt before each run; reuse --external-endpoint",
+    )
 
 
 def _options(args: argparse.Namespace) -> runner.Options:
@@ -118,12 +143,38 @@ def _options(args: argparse.Namespace) -> runner.Options:
         preseed=not args.no_preseed,
         smoke=not args.no_smoke,
         echo_logs=not args.quiet_logs,
+        external=args.external,
+        external_endpoint=args.external_endpoint,
+        external_model=args.external_model,
+        external_api_key=args.external_api_key,
+        prompt_endpoint_each_run=not args.no_prompt_endpoint,
     )
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    options = _options(args)
+    external_manifest = runner.external_manifest_path(args.experiment)
+    if external_manifest.exists():
+        options.external = True
+        return runner.run_external_manifest(str(external_manifest), options)
+
+    if args.external:
+        if (
+            args.experiment.endswith(".yaml")
+            or args.experiment.endswith(".yml")
+            or Path(args.experiment).is_file()
+        ):
+            return runner.run_external_manifest(args.experiment, options)
+        known = set(spec.available())
+        bare = {Path(name).name for name in known}
+        explicit_file = args.experiment.endswith(".yaml") or args.experiment.endswith(".yml")
+        qualified = "/" in args.experiment
+        if explicit_file or qualified or args.experiment in known or args.experiment in bare:
+            experiment = spec.load(args.experiment)
+            return runner.run_experiment(experiment, options)
+        return runner.run_external_named(args.experiment, options)
     experiment = spec.load(args.experiment)
-    return runner.run_experiment(experiment, _options(args))
+    return runner.run_experiment(experiment, options)
 
 
 def cmd_render(args: argparse.Namespace) -> int:

@@ -133,8 +133,18 @@ def job_deadline(cluster: Cluster, workload: Workload) -> int:
     return int(workload.est_seconds * pct / 100) + floor
 
 
-def benchmark_job(cluster: Cluster, run: Run, workload: Workload) -> str:
+def benchmark_job(
+    cluster: Cluster,
+    run: Run,
+    workload: Workload,
+    *,
+    service_url: str | None = None,
+    api_key: str | None = None,
+) -> str:
     values = _common(cluster)
+    external = run.strategy == "external"
+    if service_url and not external:
+        values["SERVICE_URL"] = service_url
     deadline = job_deadline(cluster, workload)
     values.update(
         {
@@ -145,9 +155,19 @@ def benchmark_job(cluster: Cluster, run: Run, workload: Workload) -> str:
             "SCENARIO_FILE": workload.scenario_name,
             "OUT_BASE": output_base(run, workload),
             "DEADLINE": str(deadline),
+            "MODEL_NAME": run.params.get("MODEL_NAME", run.model),
+            "OPENAI_MODEL": run.params.get(
+                "SERVED_MODEL_NAME", run.params.get("MODEL_NAME", run.model)
+            ),
+            "OPENAI_API_KEY": api_key or "",
         }
     )
-    return _substitute(settings.BENCH_JOB_TEMPLATE, values)
+    template = (
+        settings.EXTERNAL_BENCH_JOB_TEMPLATE
+        if external
+        else settings.BENCH_JOB_TEMPLATE
+    )
+    return _substitute(template, values)
 
 
 def preseed_job(cluster: Cluster, model: Model, node: str) -> str:

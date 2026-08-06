@@ -16,6 +16,7 @@ PARAMS_BASE_YAML = CLUSTER_DIR / "params-base.yaml"
 DEPLOYMENT_TEMPLATE = CLUSTER_DIR / "deployments" / "vllm.yaml"
 RESULTS_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "results-pvc.yaml"
 BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark.yaml"
+EXTERNAL_BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark-external.yaml"
 PRESEED_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "preseed.yaml"
 
 MODELS_DIR = REPO / "models"

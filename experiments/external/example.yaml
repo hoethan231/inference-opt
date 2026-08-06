@@ -1,0 +1,7 @@
+name: external
+model: nemotron-3-super-120b
+endpoint: https://host/v1/chat/completions
+apikey: ""
+workloads: [rate, concurrent]
+runs:
+  - mns-64-mnbt-1024
