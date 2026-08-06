@@ -19,7 +19,7 @@ hf_repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
 cache_pvc: nemotron-model-cache
 
 # vLLM image to serve this model with. Omit to use the cluster default.
-image: vllm/vllm-openai:v0.26.0
+image: vllm/vllm-openai:v0.23.0
 
 # ConfigMap keys: model-specific defaults, overridable per experiment.
 params:
@@ -28,7 +28,7 @@ params:
   MAX_NUM_SEQS: "128"
   MAX_NUM_BATCHED_TOKENS: "2048"
   GPU_MEMORY_UTILIZATION: "0.90"
-  BLOCK_SIZE: "16"
+  # BLOCK_SIZE: "16"
 
 extra_args:
   - --trust-remote-code
