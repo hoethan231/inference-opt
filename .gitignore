@@ -13,3 +13,6 @@ reports/
 # Pre-refactor artefacts, kept locally for reference (1.2G of old result files).
 archive/legacy-outputs/
 archive/plots/
+
+
+**kubeconfig**
