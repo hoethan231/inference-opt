@@ -1,0 +1,72 @@
+{
+    "metadata": {
+        "labels": {
+            "name": "coding-agent-single-stream-bursty",
+            "description": "Coding-agent workload with a single closed-loop stream (one request at a time) over a 5-minute window."
+        }
+    },
+    "spec": {
+        "backend": {
+            "kind": "openai_http",
+            "target": "http://localhost:8000",
+            "request_format": "/v1/chat/completions",
+            "stream": true,
+            "tool_call_missing_behavior": "ignore_continue",
+            "multiturn_reasoning": true,
+            "extras": {
+                "body": {
+                    "temperature": 0.0
+                }
+            }
+        },
+        "profile": {
+            "kind": "concurrent",
+            "streams": [
+                1
+            ],
+            "warmup": 30.0
+        },
+        "data": [
+            {
+                "kind": "synthetic_text",
+                "prefix_buckets": [
+                    {
+                        "bucket_weight": 70,
+                        "prefix_count": 8,
+                        "prefix_tokens": 20480
+                    },
+                    {
+                        "bucket_weight": 30,
+                        "prefix_count": 4,
+                        "prefix_tokens": 36864
+                    }
+                ],
+                "prompt_tokens": 512,
+                "prompt_tokens_stdev": 2048,
+                "prompt_tokens_min": 32,
+                "prompt_tokens_max": 8192,
+                "output_tokens": 512,
+                "output_tokens_stdev": 1536,
+                "output_tokens_min": 32,
+                "output_tokens_max": 4096,
+                "turns": 20,
+                "tool_call_turns": 15,
+                "tool_response_tokens": 1024,
+                "tool_response_tokens_stdev": 2048,
+                "tool_response_tokens_min": 32,
+                "tool_response_tokens_max": 8192
+            }
+        ],
+        "constraints": [
+            {
+                "kind": "max_duration",
+                "seconds": 300
+            },
+            {
+                "kind": "max_global_error_rate",
+                "rate": 0.05,
+                "minimum": 50
+            }
+        ]
+    }
+}
