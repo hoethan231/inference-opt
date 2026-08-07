@@ -232,7 +232,10 @@ def _preflight(
     util.log("preflight")
     kube.ensure_secret()
     kube.ensure_results_pvc()
-    kube.apply_workloads(workloads)
+    # Workloads live in one shared ConfigMap; when runs happen in parallel,
+    # writing only this run's subset can remove another run's scenario file.
+    all_workloads = workload_registry.load_many(workload_registry.available())
+    kube.apply_workloads(all_workloads)
     util.step(f"workloads loaded: {', '.join(w.name for w in workloads)}")
     if options.external:
         util.step("external mode: skipping model cache probe, deploy and smoke test")
