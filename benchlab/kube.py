@@ -157,7 +157,13 @@ class Kube:
             )
 
     def ensure_results_pvc(self) -> None:
-        self.apply(render.results_pvc(self.cluster))
+        self.apply(render.results_pvc(self.cluster, pvc_name=self.cluster.results_pvc))
+        if self.cluster.external_results_pvc != self.cluster.results_pvc:
+            self.apply(
+                render.results_pvc(
+                    self.cluster, pvc_name=self.cluster.external_results_pvc
+                )
+            )
 
     def apply_params(self, run: Run) -> str:
         manifest = render.params_configmap(self.cluster, run)
@@ -494,8 +500,15 @@ class Kube:
             sink.close()
 
     # -- benchmark jobs ---------------------------------------------------
-    def reap_stale_bench_pods(self) -> None:
-        pods = self.get_json("get", "pods", "-l", "app=guidellm").get("items", [])
+    def reap_stale_bench_pods(self, run_tag: str) -> None:
+        """Clear only this run's non-terminal benchmark pods.
+
+        Different sweeps can run in parallel; deleting every live `app=guidellm`
+        pod would kill another run's in-flight workload.
+        """
+        pods = self.get_json(
+            "get", "pods", "-l", f"app=guidellm,bench.tag={run_tag}"
+        ).get("items", [])
         stale = [
             p["metadata"]["name"]
             for p in pods
@@ -506,12 +519,21 @@ class Kube:
             self.delete("pod", name, force=True, wait=False)
 
     def run_benchmark(
-        self, run: Run, workload: Workload, log_path: Path, *, echo: bool = True
+        self,
+        run: Run,
+        workload: Workload,
+        log_path: Path,
+        *,
+        echo: bool = True,
+        service_url: str | None = None,
+        api_key: str | None = None,
     ) -> JobOutcome:
         name = render.job_name(run, workload)
-        manifest = render.benchmark_job(self.cluster, run, workload)
+        manifest = render.benchmark_job(
+            self.cluster, run, workload, service_url=service_url, api_key=api_key
+        )
         util.step(f"workload '{workload.name}' -> job/{name}")
-        self.reap_stale_bench_pods()
+        self.reap_stale_bench_pods(run.tag)
         self.delete("job", name, wait=True)
         self.apply(manifest)
 
@@ -653,11 +675,15 @@ class Kube:
             ["wait", "--for=condition=Ready", f"pod/{name}", "--timeout=180s"], timeout=200
         )
 
-    def pull(self, glob: str, dest: Path, *, quiet: bool = False) -> list[str]:
+    def pull(
+        self, glob: str, dest: Path, *, quiet: bool = False, pvc: str | None = None
+    ) -> list[str]:
         """Copy result files off the results PVC via a throwaway reader pod."""
         pod = "bench-reader"
         dest.mkdir(parents=True, exist_ok=True)
-        self._utility_pod(pod, self.cluster.results_pvc, "/data", read_only=True)
+        self._utility_pod(
+            pod, pvc or self.cluster.results_pvc, "/data", read_only=True
+        )
         try:
             listing = self._kubectl(
                 ["exec", pod, "--", "sh", "-c", f"ls /data/{glob} 2>/dev/null"], check=False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from . import (
     plan as plan_mod,
     render,
     report,
+    run_queue,
     runner,
     settings,
     spec,
@@ -102,6 +104,31 @@ def _add_run_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="don't echo benchmark output (it is still written to the run directory)",
     )
+    parser.add_argument(
+        "--external",
+        action="store_true",
+        help="benchmark externally hosted OpenAI-compatible endpoints instead of "
+        "deploying the in-cluster vLLM server",
+    )
+    parser.add_argument(
+        "--external-endpoint",
+        help="default endpoint URL for --external runs "
+        "(for example https://host/v1/chat/completions)",
+    )
+    parser.add_argument(
+        "--external-model",
+        help="model registry name for --external ad-hoc runs "
+        "(used for tokenizer/model identity in benchmark jobs)",
+    )
+    parser.add_argument(
+        "--external-api-key",
+        help="API key for OpenAI-compatible external endpoint benchmark jobs",
+    )
+    parser.add_argument(
+        "--no-prompt-endpoint",
+        action="store_true",
+        help="in --external mode, do not prompt before each run; reuse --external-endpoint",
+    )
 
 
 def _options(args: argparse.Namespace) -> runner.Options:
@@ -118,12 +145,136 @@ def _options(args: argparse.Namespace) -> runner.Options:
         preseed=not args.no_preseed,
         smoke=not args.no_smoke,
         echo_logs=not args.quiet_logs,
+        external=args.external,
+        external_endpoint=args.external_endpoint,
+        external_model=args.external_model,
+        external_api_key=args.external_api_key,
+        prompt_endpoint_each_run=not args.no_prompt_endpoint,
     )
 
 
+def _run_request(experiment: str, options: runner.Options) -> int:
+    external_manifest = runner.external_manifest_path(experiment)
+    if external_manifest.exists() and runner.is_external_manifest(external_manifest):
+        options.external = True
+        return runner.run_external_manifest(str(external_manifest), options)
+
+    if options.external:
+        if experiment.endswith(".yaml") or experiment.endswith(".yml") or Path(experiment).is_file():
+            return runner.run_external_manifest(experiment, options)
+        known = set(spec.available())
+        bare = {Path(name).name for name in known}
+        explicit_file = experiment.endswith(".yaml") or experiment.endswith(".yml")
+        qualified = "/" in experiment
+        if explicit_file or qualified or experiment in known or experiment in bare:
+            loaded = spec.load(experiment)
+            return runner.run_experiment(loaded, options)
+        return runner.run_external_named(experiment, options)
+    loaded = spec.load(experiment)
+    return runner.run_experiment(loaded, options)
+
+
+def _drain_queue() -> int:
+    final_code = 0
+    while True:
+        item = run_queue.pop_next()
+        if not item:
+            return final_code
+        util.rule(f"queued run: {item.experiment}  [{item.id}]")
+        options = runner.Options(**item.options)
+        code = _run_request(item.experiment, options)
+        if code != 0:
+            final_code = code
+
+
+def _start_queue_worker() -> int:
+    active = run_queue.active_run()
+    if active:
+        util.die(
+            f"a run is already active (pid {active.pid}, experiment '{active.experiment}'); "
+            "queue worker is already running"
+        )
+    queued = run_queue.list_items()
+    if not queued:
+        util.step("queue is empty")
+        return 0
+    if not run_queue.try_acquire_active("queue-worker"):
+        util.die("another run became active; try again")
+    util.step("starting queue worker")
+    try:
+        return _drain_queue()
+    finally:
+        run_queue.clear_active()
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    experiment = spec.load(args.experiment)
-    return runner.run_experiment(experiment, _options(args))
+    options = _options(args)
+    if args.queue:
+        item, position = run_queue.enqueue(args.experiment, dataclasses.asdict(options))
+        util.ok(f"queued {args.experiment} as #{position} ({item.id})")
+        # If nothing is running, become the queue worker and start immediately.
+        active = run_queue.active_run()
+        if not active and run_queue.try_acquire_active(args.experiment):
+            util.step("queue is idle; starting queued runs now")
+            try:
+                return _drain_queue()
+            finally:
+                run_queue.clear_active()
+        return 0
+
+    active = run_queue.active_run()
+    if active and active.pid != 0:
+        util.die(
+            f"a run is already active (pid {active.pid}, experiment '{active.experiment}'). "
+            "Use --queue to enqueue this request."
+        )
+    if not run_queue.try_acquire_active(args.experiment):
+        util.die("another run became active; use --queue to enqueue this request")
+    try:
+        code = _run_request(args.experiment, options)
+        queued_code = _drain_queue()
+        return queued_code if queued_code else code
+    finally:
+        run_queue.clear_active()
+
+
+def cmd_queue(args: argparse.Namespace) -> int:
+    if args.action == "start":
+        return _start_queue_worker()
+    if args.action == "rm":
+        if args.position is None:
+            util.die("name a queue position to remove, for example: ./bench queue rm 2")
+        removed = run_queue.remove_at(args.position)
+        util.ok(f"removed queue position {args.position}: {removed.experiment} ({removed.id})")
+        return 0
+
+    active = run_queue.active_run()
+    queued = run_queue.list_items()
+    util.rule("run queue")
+    if active:
+        print(
+            util.table(
+                ["pid", "host", "started", "experiment"],
+                [[active.pid, active.host or "-", active.started_at, active.experiment or "-"]],
+            )
+        )
+    else:
+        util.step("no active run")
+    print()
+    util.rule(f"queued jobs ({len(queued)})")
+    if not queued:
+        print("(empty)")
+        return 0
+    print(
+        util.table(
+            ["pos", "id", "enqueued", "experiment"],
+            [
+                [i, item.id, item.enqueued_at.replace("T", " ")[:19], item.experiment]
+                for i, item in enumerate(queued, 1)
+            ],
+        )
+    )
+    return 0
 
 
 def cmd_render(args: argparse.Namespace) -> int:
@@ -485,6 +636,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_run_args(run_parser)
     run_parser.set_defaults(func=cmd_run)
+    run_parser.add_argument(
+        "--queue",
+        action="store_true",
+        help="enqueue this run to execute after the currently active run/sweep",
+    )
 
     render_parser = subparsers.add_parser(
         "render", help="print the manifests a run would apply, without applying them"
@@ -542,6 +698,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="server, jobs and recent runs")
     status_parser.set_defaults(func=cmd_status)
+
+    queue_parser = subparsers.add_parser(
+        "queue", help="show queue, start worker, or remove queued jobs by position"
+    )
+    queue_parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["start", "rm"],
+        help="'start' runs queued jobs now when idle; 'rm' removes one queued position",
+    )
+    queue_parser.add_argument(
+        "position",
+        nargs="?",
+        type=int,
+        help="queue position to remove (used with: ./bench queue rm <position>)",
+    )
+    queue_parser.set_defaults(func=cmd_queue)
 
     pull_parser = subparsers.add_parser(
         "pull", help="copy raw result files off the results PVC"

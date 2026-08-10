@@ -28,7 +28,6 @@ params:
   KV_CACHE_DTYPE: "fp8"
   MAX_NUM_SEQS: "128"
   MAX_NUM_BATCHED_TOKENS: "2048"
-  BLOCK_SIZE: "16"
   VLLM_ATTENTION_BACKEND: ""
 
 extra_args: []

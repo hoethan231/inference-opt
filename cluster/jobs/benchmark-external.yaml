@@ -1,0 +1,94 @@
+# =============================================================================
+# External benchmark Job template.
+#
+# External runs still use a dedicated template, but target endpoint values come
+# from the external manifest selected by `bench run`.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: __JOB_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app: guidellm
+    bench.suite: vllm
+    bench.workload: __WORKLOAD_LABEL__
+    bench.tag: __TAG_LABEL__
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: __DEADLINE__
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: guidellm
+        bench.suite: vllm
+        bench.workload: __WORKLOAD_LABEL__
+        bench.tag: __TAG_LABEL__
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: guidellm
+          image: __GUIDELLM_IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MODEL_NAME
+              value: "__MODEL_NAME__"
+            - name: OPENAI_MODEL
+              value: "__OPENAI_MODEL__"
+            - name: OPENAI_API_KEY
+              value: "__OPENAI_API_KEY__"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: __HF_SECRET__
+                  key: HF_TOKEN
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              python3 - <<'PY'
+              import json, os
+              with open("/workloads/__SCENARIO_FILE__") as f:
+                  scenario = json.load(f)
+              backend = scenario.setdefault("spec", {}).setdefault("backend", {})
+              backend["target"] = "__EXTERNAL_TARGET__"
+              backend["request_format"] = "__EXTERNAL_REQUEST_FORMAT__"
+              backend["validate_backend"] = False
+              backend["model"] = "__OPENAI_MODEL__"
+              backend["api_key"] = os.environ.get("OPENAI_API_KEY", "")
+              backend.setdefault("extras", {}).setdefault("body", {})["model"] = "__OPENAI_MODEL__"
+              with open("/tmp/scenario.json", "w") as f:
+                  json.dump(scenario, f)
+              PY
+              echo "GuideLLM workload '__WORKLOAD_LABEL__' -> __EXTERNAL_FULL_ENDPOINT__  (tag __TAG_LABEL__)"
+              exec guidellm run \
+                --scenario /tmp/scenario.json \
+                --tokenizer "{\"kind\":\"huggingface_auto\",\"model\":\"${MODEL_NAME}\",\"load_kwargs\":{\"trust_remote_code\":true}}" \
+                --output kind=console \
+                --output kind=json,path=__RESULTS_MOUNT__/__OUT_BASE__.json \
+                --output kind=html,path=__RESULTS_MOUNT__/__OUT_BASE__.html
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "6"
+              memory: 16Gi
+          volumeMounts:
+            - name: results
+              mountPath: __RESULTS_MOUNT__
+            - name: workloads
+              mountPath: /workloads
+              readOnly: true
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: __EXTERNAL_RESULTS_PVC__
+        - name: workloads
+          configMap:
+            name: __WORKLOADS_CONFIGMAP__

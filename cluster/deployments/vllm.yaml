@@ -70,7 +70,6 @@ spec:
               --kv-cache-dtype "$KV_CACHE_DTYPE"
               --max-num-seqs "$MAX_NUM_SEQS"
               --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
-              --block-size "$BLOCK_SIZE"
               "$@"
           ports:
             - name: http

@@ -221,6 +221,13 @@ def _with_baseline(
     rows = df[df["param"] == param].copy()
     if rows.empty:
         return rows
+    if (
+        "derived_axis" in rows.columns
+        and rows["derived_axis"].any()
+        and "experiment" in rows.columns
+        and rows["experiment"].eq("external").all()
+    ):
+        rows = _aggregate_external_axis(rows)
     rows["is_baseline"] = False
 
     baseline = df[df["param"] == "baseline"].copy()
@@ -248,6 +255,19 @@ def _with_baseline(
 
     combined = pd.concat([baseline, rows], ignore_index=True)
     return combined.drop_duplicates(subset=["series", "workload", "target"])
+
+
+def _aggregate_external_axis(rows: pd.DataFrame) -> pd.DataFrame:
+    """Collapse external grid points into one sweep value per axis value."""
+    grouped = rows.copy()
+    grouped["series"] = grouped["value_display"]
+    keys = ["series", "workload", "mode", "target", "param", "value", "value_display"]
+    numeric = grouped.select_dtypes(include="number").columns.tolist()
+    aggregated = grouped.groupby(keys, as_index=False)[numeric].mean()
+    aggregated["tag"] = "external-aggregate"
+    aggregated["suffix"] = ""
+    aggregated["derived_axis"] = True
+    return aggregated
 
 
 def plot_axis_detail(
@@ -361,13 +381,15 @@ def build(
 ) -> None:
     by_tag = {r.tag: r for r in records}
     df = ingest.frame(records)
+    overview_df = df[~df["derived_axis"]] if "derived_axis" in df.columns else df
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # "unknown" is what an import gets when no axis was ever recorded for it: a
     # bag of unrelated one-offs, which is not an axis and can't be plotted as one.
+    axis_source = df
     axis_params = [
         p
-        for p in df["param"].unique()
+        for p in axis_source["param"].unique()
         if p not in ("baseline", "single", "grid", "unknown", "")
     ]
 
@@ -382,8 +404,8 @@ def build(
         util.log(f"scoped to axis '{axis_params[0]}'")
     else:
         # Overview + frontier across everything that ran.
-        for workload in sorted(df["workload"].unique()):
-            subset = df[df["workload"] == workload]
+        for workload in sorted(overview_df["workload"].unique()):
+            subset = overview_df[overview_df["workload"] == workload]
             mode = subset["mode"].iloc[0]
             if mode == "rate":
                 plot_rate_overview(subset, out_dir / f"overview_{workload}.png", f"{title} · {workload}")
@@ -393,11 +415,45 @@ def build(
 
     # Per-axis detail figures, for experiments that varied named knobs.
     for axis in sorted(axis_params):
-        rate = _with_baseline(df[df["mode"] == "rate"], axis, by_tag)
-        conc = _with_baseline(df[df["mode"] == "concurrent"], axis, by_tag)
-        if rate.empty and conc.empty:
-            continue
-        plot_axis_detail(axis, rate, conc, out_dir / f"axis_{util.sanitize(axis)}.png")
+        axis_rows = axis_source[axis_source["param"] == axis]
+        contexts = (
+            sorted(
+                {
+                    str(v)
+                    for v in axis_rows.get("axis_context", pd.Series(dtype=str)).unique()
+                    if str(v).strip()
+                }
+            )
+            if "axis_context" in axis_rows.columns
+            else []
+        )
+        if not contexts:
+            contexts = [""]
+
+        for context in contexts:
+            scoped = axis_source
+            if context:
+                scoped = axis_source[axis_source.get("axis_context", "") == context]
+            rate = _with_baseline(scoped[scoped["mode"] == "rate"], axis, by_tag)
+            conc = _with_baseline(scoped[scoped["mode"] == "concurrent"], axis, by_tag)
+            if rate.empty and conc.empty:
+                continue
+            # For grid slices (for example "axis @ other_axis=value"), the title
+            # already carries the conditioning context. Keep series labels as the
+            # swept value only to avoid noisy tag suffixes on the x-axis.
+            if context:
+                if not rate.empty:
+                    rate = rate.copy()
+                    rate["series"] = rate["value_display"].astype(str)
+                if not conc.empty:
+                    conc = conc.copy()
+                    conc["series"] = conc["value_display"].astype(str)
+            stem = f"axis_{util.sanitize(axis)}"
+            axis_title = axis
+            if context:
+                stem += f"__at_{util.sanitize(context)}"
+                axis_title = f"{axis} @ {context}"
+            plot_axis_detail(axis_title, rate, conc, out_dir / f"{stem}.png")
 
     warn_unusable(df)
     print()

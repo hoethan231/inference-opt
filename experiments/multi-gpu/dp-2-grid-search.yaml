@@ -1,0 +1,15 @@
+name: dp-2-grid-search
+description: Grid search of MAX_NUM_SEQS and MAX_NUM_BATCHED_TOKENS for data-parallel over both GPUs.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+params:
+  DATA_PARALLEL_SIZE: "2"
+
+strategy:
+  kind: grid
+  axes:
+    - key: MAX_NUM_SEQS
+      values: ["8", "16", "32", "64", "128"]
+    - key: MAX_NUM_BATCHED_TOKENS
+      values: ["16384", "32768", "65536", "131072"]

@@ -41,10 +41,11 @@ spec:
         - name: guidellm
           image: __GUIDELLM_IMAGE__
           imagePullPolicy: IfNotPresent
-          envFrom:
-            - configMapRef:
-                name: __PARAMS_CONFIGMAP__
           env:
+            - name: MODEL_NAME
+              value: "__MODEL_NAME__"
+            - name: OPENAI_API_KEY
+              value: "__OPENAI_API_KEY__"
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:

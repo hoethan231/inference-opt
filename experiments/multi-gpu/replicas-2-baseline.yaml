@@ -1,0 +1,7 @@
+name: replicas-2-baseline
+description: Baseline run of two replicas across both GPUs.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: single
