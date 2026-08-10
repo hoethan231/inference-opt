@@ -6,9 +6,14 @@
 # The double-underscore names below are substituted from cluster/cluster.yaml and
 # the model registry; run `bench render <experiment>` to see the result.
 #
-# strategy: Recreate — this cluster runs one benchmark engine at a time and the
-# weights PVC is ReadWriteOnce, so the old pod must be gone before the new one
-# starts or the new pod waits forever for attach/GPU resources.
+# strategy: Recreate — the outgoing pod holds the GPUs the incoming one needs, so
+# a rolling update would deadlock: the new pod waits for devices the old pod only
+# releases once the new pod is Ready.
+#
+# The GPU request is __GPU_COUNT__, rendered from the config's own
+# TENSOR/PIPELINE/DATA_PARALLEL_SIZE (benchlab/parallelism.py). Do not put a
+# literal back: a pod given fewer GPUs than its parallelism asks for hangs on a
+# rank that never starts rather than failing.
 # =============================================================================
 
 apiVersion: apps/v1
@@ -58,25 +63,31 @@ spec:
               --host 0.0.0.0
               --port "$PORT"
               --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
+              --pipeline-parallel-size "$PIPELINE_PARALLEL_SIZE"
+              --data-parallel-size "$DATA_PARALLEL_SIZE"
               --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
               --max-model-len "$MAX_MODEL_LEN"
               --kv-cache-dtype "$KV_CACHE_DTYPE"
               --max-num-seqs "$MAX_NUM_SEQS"
               --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
-              --block-size "$BLOCK_SIZE"
               "$@"
           ports:
             - name: http
               containerPort: 8000
+          # memory is close to the GPU node's whole allocatable total (~47Gi), so
+          # only one engine pod can ever be scheduled regardless of how many GPUs
+          # are free. That is deliberate: two engines on one node would share
+          # PCIe, host memory bandwidth and the weights volume, and neither one's
+          # latency numbers would be comparable to anything else in the store.
           resources:
             requests:
               nvidia.com/gpu: __GPU_COUNT__
               cpu: "8"
-              memory: 22Gi
+              memory: 40Gi
             limits:
               nvidia.com/gpu: __GPU_COUNT__
               cpu: "8"
-              memory: 22Gi
+              memory: 40Gi
           volumeMounts:
             - name: model-cache
               mountPath: __MODEL_MOUNT__
@@ -104,6 +115,9 @@ spec:
         - name: model-cache
           persistentVolumeClaim:
             claimName: __MODEL_CACHE_PVC__
+        # Ranks of a multi-GPU engine pass tensors through shared memory, so this
+        # is a hard floor for anything above TENSOR_PARALLEL_SIZE 1, not a tuning
+        # detail: too small shows up as a NCCL or bus error during startup.
         - name: dshm
           emptyDir:
             medium: Memory

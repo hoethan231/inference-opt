@@ -149,6 +149,7 @@ def run(
         )
 
     _print_config_diff(record_a, record_b, labels)
+    _warn_on_topology_change(record_a, record_b, labels)
     util.log(f"plots written to {out_dir}")
 
 
@@ -208,6 +209,22 @@ def _print_config_diff(a: RunRecord, b: RunRecord, labels: tuple[str, str]) -> N
         return
     if guessed:
         util.step(f"config for {' and '.join(guessed)} was reconstructed on import")
+
+
+def _warn_on_topology_change(a: RunRecord, b: RunRecord, labels: tuple[str, str]) -> None:
+    """Say when the two runs did not use the same number of GPUs.
+
+    The delta table reads the same either way, but its meaning does not: a config
+    change is a tuning result, whereas a topology change also moves the KV-cache
+    budget and adds (or removes) cross-GPU communication on every forward pass.
+    """
+    if a.topology == b.topology:
+        return
+    print()
+    util.step(
+        f"{labels[0]} ran on {a.topology.human} and {labels[1]} on {b.topology.human}, "
+        f"so these deltas mix the config change with the change of GPU topology"
+    )
 
 
 def _flag_rows(key: str, before: str, after: str) -> list[list[str]]:

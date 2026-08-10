@@ -174,17 +174,61 @@ def _parse_axis(raw: Any, index: int, model_name: str, where: str) -> Axis:
     )
 
 
+def _files() -> list[Path]:
+    if not settings.EXPERIMENTS_DIR.is_dir():
+        return []
+    return sorted(settings.EXPERIMENTS_DIR.rglob("*.yaml"))
+
+
 def experiment_path(name: str) -> Path:
+    """Resolve an experiment by path, by group-qualified name, or by bare name.
+
+    Experiments live in subdirectories (`single-gpu/`, `multi-gpu/`) because a
+    result measured on one GPU and a result measured on two answer different
+    questions, and the spec is where that distinction is easiest to see. The bare
+    name keeps working — `./bench run baseline` should not have to know which
+    group a spec was filed under — and only an actual collision asks for more.
+    """
     candidate = Path(name)
-    if candidate.suffix in (".yaml", ".yml") and candidate.exists():
+    if candidate.suffix in (".yaml", ".yml"):
+        # An explicit file is taken at its word, so a bad one names itself in the
+        # error rather than being mangled into a lookup under experiments/.
         return candidate.resolve()
-    return settings.EXPERIMENTS_DIR / f"{util.sanitize(name)}.yaml"
+
+    qualified = settings.EXPERIMENTS_DIR / f"{name}.yaml"
+    if qualified.exists():
+        return qualified
+
+    wanted = util.sanitize(Path(name).name)
+    matches = [p for p in _files() if p.stem in (name, wanted)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        util.die(
+            f"'{name}' matches {len(matches)} experiments; say which: "
+            f"{', '.join(_display(p) for p in matches)}"
+        )
+    return qualified
+
+
+def _display(path: Path) -> str:
+    """How a spec is named on the command line: group-qualified, no extension."""
+    try:
+        return path.relative_to(settings.EXPERIMENTS_DIR).with_suffix("").as_posix()
+    except ValueError:
+        return path.stem
+
+
+def group(path: Path | None) -> str:
+    """The subdirectory an experiment is filed under, '-' at the top level."""
+    if path is None:
+        return "-"
+    relative = _display(path)
+    return relative.rsplit("/", 1)[0] if "/" in relative else "-"
 
 
 def available() -> list[str]:
-    if not settings.EXPERIMENTS_DIR.is_dir():
-        return []
-    return sorted(p.stem for p in settings.EXPERIMENTS_DIR.glob("*.yaml"))
+    return [_display(p) for p in _files()]
 
 
 def load(name: str) -> Experiment:

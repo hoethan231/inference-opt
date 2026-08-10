@@ -1,0 +1,17 @@
+# Read these results knowing what bounded them: on one GPU this model leaves
+# 13.61 GiB of KV cache (584,362 tokens), so at MAX_NUM_SEQS 256 the engine cannot
+# actually hold 256 sequences and the axis measures queueing under a starved cache
+# rather than batching. Worth re-running at two GPUs if multi-gpu/tp-scaling wins.
+
+name: nemotron-grid
+description: Joint sweep of batching against KV-cache precision.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+strategy:
+  kind: grid
+  axes:
+    - key: MAX_NUM_SEQS
+      values: ["64", "128", "256"]
+    - key: MAX_NUM_BATCHED_TOKENS
+      values: ["2048", "4096"]

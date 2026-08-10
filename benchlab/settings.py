@@ -17,6 +17,7 @@ DEPLOYMENT_TEMPLATE = CLUSTER_DIR / "deployments" / "vllm.yaml"
 RESULTS_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "results-pvc.yaml"
 MODEL_CACHE_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "model-cache-pvc.yaml"
 BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark.yaml"
+EXTERNAL_BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark-external.yaml"
 PRESEED_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "preseed.yaml"
 
 MODELS_DIR = REPO / "models"
@@ -27,6 +28,8 @@ WORKLOADS_INDEX = WORKLOADS_DIR / "index.yaml"
 RUNS_DIR = REPO / "runs"
 INDEX_PATH = RUNS_DIR / "index.jsonl"
 REPORTS_DIR = REPO / "reports"
+QUEUE_PATH = RUNS_DIR / "queue.jsonl"
+QUEUE_ACTIVE_PATH = RUNS_DIR / "queue.active.json"
 
 # Tags become Kubernetes object names: a Job is "<tag>-<workload code>" (code is
 # capped at 6) and its pod appends "-xxxxx", all of which must fit in RFC-1123's
@@ -51,8 +54,10 @@ class Cluster:
     hf_secret: str
     results_pvc: str
     model_cache_pvc_storage: str
+    external_results_pvc: str
     results_mount: str
     model_mount: str
+    gpus_per_node: int
     gpu_rivals: list[dict[str, str]]
     images: dict[str, str]
     timeouts: dict[str, int]

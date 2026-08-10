@@ -76,6 +76,9 @@ def abbrev(key: str) -> str:
         "BLOCK_SIZE": "bs",
         "VLLM_ATTENTION_BACKEND": "ab",
         "TENSOR_PARALLEL_SIZE": "tp",
+        "PIPELINE_PARALLEL_SIZE": "pp",
+        "DATA_PARALLEL_SIZE": "dp",
+        "EXPERT_PARALLEL": "ep",
     }
     if key in known:
         return known[key]

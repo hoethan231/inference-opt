@@ -1,0 +1,13 @@
+name: mnbt-8192
+description: Set MAX_NUM_BATCHED_TOKENS to 8192.
+model: nemotron-3-super-120b
+workloads: [rate]
+
+image: vllm/vllm-openai:v0.26.0
+
+strategy:
+  kind: single
+
+params:
+  BLOCK_SIZE: "8320"
+  MAX_NUM_BATCHED_TOKENS: "8192"

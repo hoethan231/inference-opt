@@ -1,0 +1,11 @@
+name: vllm-26
+description: vllm 0.26.0 with MNS=256 and MNBT=2048.
+model: nemotron-3-super-120b
+workloads: [sweep, sync]
+
+params:
+  MAX_NUM_SEQS: "256"
+  MAX_NUM_BATCHED_TOKENS: "2048"
+
+strategy:
+  kind: single

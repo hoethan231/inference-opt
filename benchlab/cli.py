@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from . import (
     plan as plan_mod,
     render,
     report,
+    run_queue,
     runner,
     settings,
     spec,
@@ -31,6 +33,7 @@ examples:
   ./bench run ofat-scheduler --only mns      just one axis
   ./bench report ofat-scheduler              plots for every config in it
   ./bench runs                               what has been measured, with tags
+  ./bench show <tag>                         one run's config, engine facts, files
   ./bench compare <tag> <tag>                head-to-head deltas
   ./bench status                             what the cluster is doing now
 """
@@ -75,16 +78,16 @@ def _add_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=1,
-        help="retries for a failed config, fresh deploy each time (default: 1). "
+        default=0,
+        help="retries for a failed config, fresh deploy each time (default: 0). "
         "Configs that fail because they cannot fit in memory are never retried",
     )
     parser.add_argument(
         "--gpu-wait-timeout",
         type=int,
         default=180,
-        help="seconds to wait for another workload to release the shared GPU "
-        "before deploying anyway (default: 180)",
+        help="seconds to wait for other workloads to release enough GPUs for this "
+        "config's parallelism before deploying anyway (default: 180)",
     )
     parser.add_argument(
         "--no-preseed",
@@ -100,6 +103,31 @@ def _add_run_args(parser: argparse.ArgumentParser) -> None:
         "--quiet-logs",
         action="store_true",
         help="don't echo benchmark output (it is still written to the run directory)",
+    )
+    parser.add_argument(
+        "--external",
+        action="store_true",
+        help="benchmark externally hosted OpenAI-compatible endpoints instead of "
+        "deploying the in-cluster vLLM server",
+    )
+    parser.add_argument(
+        "--external-endpoint",
+        help="default endpoint URL for --external runs "
+        "(for example https://host/v1/chat/completions)",
+    )
+    parser.add_argument(
+        "--external-model",
+        help="model registry name for --external ad-hoc runs "
+        "(used for tokenizer/model identity in benchmark jobs)",
+    )
+    parser.add_argument(
+        "--external-api-key",
+        help="API key for OpenAI-compatible external endpoint benchmark jobs",
+    )
+    parser.add_argument(
+        "--no-prompt-endpoint",
+        action="store_true",
+        help="in --external mode, do not prompt before each run; reuse --external-endpoint",
     )
 
 
@@ -117,12 +145,136 @@ def _options(args: argparse.Namespace) -> runner.Options:
         preseed=not args.no_preseed,
         smoke=not args.no_smoke,
         echo_logs=not args.quiet_logs,
+        external=args.external,
+        external_endpoint=args.external_endpoint,
+        external_model=args.external_model,
+        external_api_key=args.external_api_key,
+        prompt_endpoint_each_run=not args.no_prompt_endpoint,
     )
 
 
+def _run_request(experiment: str, options: runner.Options) -> int:
+    external_manifest = runner.external_manifest_path(experiment)
+    if external_manifest.exists() and runner.is_external_manifest(external_manifest):
+        options.external = True
+        return runner.run_external_manifest(str(external_manifest), options)
+
+    if options.external:
+        if experiment.endswith(".yaml") or experiment.endswith(".yml") or Path(experiment).is_file():
+            return runner.run_external_manifest(experiment, options)
+        known = set(spec.available())
+        bare = {Path(name).name for name in known}
+        explicit_file = experiment.endswith(".yaml") or experiment.endswith(".yml")
+        qualified = "/" in experiment
+        if explicit_file or qualified or experiment in known or experiment in bare:
+            loaded = spec.load(experiment)
+            return runner.run_experiment(loaded, options)
+        return runner.run_external_named(experiment, options)
+    loaded = spec.load(experiment)
+    return runner.run_experiment(loaded, options)
+
+
+def _drain_queue() -> int:
+    final_code = 0
+    while True:
+        item = run_queue.pop_next()
+        if not item:
+            return final_code
+        util.rule(f"queued run: {item.experiment}  [{item.id}]")
+        options = runner.Options(**item.options)
+        code = _run_request(item.experiment, options)
+        if code != 0:
+            final_code = code
+
+
+def _start_queue_worker() -> int:
+    active = run_queue.active_run()
+    if active:
+        util.die(
+            f"a run is already active (pid {active.pid}, experiment '{active.experiment}'); "
+            "queue worker is already running"
+        )
+    queued = run_queue.list_items()
+    if not queued:
+        util.step("queue is empty")
+        return 0
+    if not run_queue.try_acquire_active("queue-worker"):
+        util.die("another run became active; try again")
+    util.step("starting queue worker")
+    try:
+        return _drain_queue()
+    finally:
+        run_queue.clear_active()
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    experiment = spec.load(args.experiment)
-    return runner.run_experiment(experiment, _options(args))
+    options = _options(args)
+    if args.queue:
+        item, position = run_queue.enqueue(args.experiment, dataclasses.asdict(options))
+        util.ok(f"queued {args.experiment} as #{position} ({item.id})")
+        # If nothing is running, become the queue worker and start immediately.
+        active = run_queue.active_run()
+        if not active and run_queue.try_acquire_active(args.experiment):
+            util.step("queue is idle; starting queued runs now")
+            try:
+                return _drain_queue()
+            finally:
+                run_queue.clear_active()
+        return 0
+
+    active = run_queue.active_run()
+    if active and active.pid != 0:
+        util.die(
+            f"a run is already active (pid {active.pid}, experiment '{active.experiment}'). "
+            "Use --queue to enqueue this request."
+        )
+    if not run_queue.try_acquire_active(args.experiment):
+        util.die("another run became active; use --queue to enqueue this request")
+    try:
+        code = _run_request(args.experiment, options)
+        queued_code = _drain_queue()
+        return queued_code if queued_code else code
+    finally:
+        run_queue.clear_active()
+
+
+def cmd_queue(args: argparse.Namespace) -> int:
+    if args.action == "start":
+        return _start_queue_worker()
+    if args.action == "rm":
+        if args.position is None:
+            util.die("name a queue position to remove, for example: ./bench queue rm 2")
+        removed = run_queue.remove_at(args.position)
+        util.ok(f"removed queue position {args.position}: {removed.experiment} ({removed.id})")
+        return 0
+
+    active = run_queue.active_run()
+    queued = run_queue.list_items()
+    util.rule("run queue")
+    if active:
+        print(
+            util.table(
+                ["pid", "host", "started", "experiment"],
+                [[active.pid, active.host or "-", active.started_at, active.experiment or "-"]],
+            )
+        )
+    else:
+        util.step("no active run")
+    print()
+    util.rule(f"queued jobs ({len(queued)})")
+    if not queued:
+        print("(empty)")
+        return 0
+    print(
+        util.table(
+            ["pos", "id", "enqueued", "experiment"],
+            [
+                [i, item.id, item.enqueued_at.replace("T", " ")[:19], item.experiment]
+                for i, item in enumerate(queued, 1)
+            ],
+        )
+    )
+    return 0
 
 
 def cmd_render(args: argparse.Namespace) -> int:
@@ -135,7 +287,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     _, _, model = experiment.resolved()
     print(f"# --- ConfigMap for {run.tag} ---")
     print(render.params_configmap(cluster, run))
-    print(f"# --- Deployment + Service ({model.name}) ---")
+    print(f"# --- Deployment + Service ({model.name}, {run.topology.human}) ---")
     print(render.deployment(cluster, model, run))
     for workload in workload_registry.load_many(run.workloads):
         print(f"# --- benchmark Job: {workload.name} ---")
@@ -224,6 +376,7 @@ def cmd_runs(args: argparse.Namespace) -> int:
             r.tag,
             r.experiment,
             r.model,
+            r.topology.label,
             r.status,
             ", ".join(sorted(r.results or {})) or "-",
             (r.finished_at or "")[:16].replace("T", " "),
@@ -231,9 +384,104 @@ def cmd_runs(args: argparse.Namespace) -> int:
         for r in records
     ]
     util.rule(f"{len(rows)} run(s)")
-    print(util.table(["tag", "experiment", "model", "status", "workloads", "finished"], rows))
+    print(
+        util.table(
+            ["tag", "experiment", "model", "gpus", "status", "workloads", "finished"], rows
+        )
+    )
     util.step("head-to-head: ./bench compare <tag> <tag>  (a unique substring works too)")
     return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    """Everything recorded about one run: config as applied, engine, artefacts.
+
+    The index holds all of this per attempt, but reading JSONL by hand to answer
+    "what was this run actually given, and what did the engine make of it" is not
+    a reasonable ask.
+    """
+    record = store.resolve_tag(args.tag)
+    run_dir = settings.REPO / record.run_dir if record.run_dir else store.run_dir(record.tag)
+
+    util.rule(record.tag)
+    facts = [
+        ["experiment", f"{record.experiment} ({record.strategy})"],
+        ["model", f"{record.model}  [{record.hf_repo or '?'}]"],
+        ["gpus", record.topology.label],
+        ["axis", f"{record.param} = {record.value}" if record.param else "-"],
+        ["suffix", record.suffix or "-"],
+        ["status", record.status + (f" ({record.failure_kind})" if record.failure_kind else "")],
+        ["attempt", record.attempt or "-"],
+        ["started", (record.started_at or "-")[:19].replace("T", " ")],
+        ["took", util.human_duration(record.elapsed_s)],
+        ["workloads", ", ".join(record.workloads) or "-"],
+        ["results", ", ".join(sorted(record.results or {})) or "none written"],
+    ]
+    print(util.table(["", ""], facts))
+
+    if record.failure_detail:
+        print()
+        util.warn(record.failure_detail)
+
+    print()
+    util.rule("engine, read from the server log at startup")
+    if record.engine:
+        print(util.table(["fact", "value"], sorted(record.engine.items())))
+    else:
+        util.step(
+            "nothing recorded — either the run predates this tool (see `bench migrate`) "
+            "or the server never came up"
+        )
+    if record.smoke:
+        util.step(f"smoke test: {record.smoke}")
+
+    print()
+    util.rule("config as applied (* = set by this run, not the base)")
+    extra_args = record.params.get("EXTRA_ARGS", record.extra_args)
+    rows = [
+        ["*" if key in record.overrides else "", key, util.elide(str(value), 60)]
+        for key, value in sorted(record.params.items())
+        if key != "EXTRA_ARGS"
+    ]
+    print(util.table(["", "key", "value"], rows) if rows else "  (no config recorded)")
+    if extra_args:
+        print()
+        print("  EXTRA_ARGS:")
+        for flag in extra_args.split():
+            print(f"    {flag}")
+
+    print()
+    util.rule("files")
+    if run_dir.exists():
+        files = sorted(run_dir.iterdir(), key=lambda p: p.name)
+        print(
+            util.table(
+                ["file", "size", "what"],
+                [[p.name, f"{p.stat().st_size / 1024:.0f}K", _blurb(p)] for p in files],
+            )
+        )
+        util.step(f"in {run_dir}")
+    else:
+        util.step(f"{run_dir} does not exist")
+    return 0
+
+
+# The per-run directory is only self-explanatory if you built it.
+_FILE_BLURB = {
+    "summary.json": "parsed metrics, cached for `bench report`",
+    "config.yaml": "the exact ConfigMap this run was served with",
+    "server.log": "vLLM startup log — where the engine facts above come from",
+    "engine.log": "vLLM log captured while the benchmark was running",
+}
+_SUFFIX_BLURB = {
+    ".json": "raw GuideLLM results",
+    ".html": "GuideLLM's own report — open it in a browser",
+    ".log": "benchmark job output",
+}
+
+
+def _blurb(path: Path) -> str:
+    return _FILE_BLURB.get(path.name) or _SUFFIX_BLURB.get(path.suffix, "")
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -342,13 +590,19 @@ def cmd_models(args: argparse.Namespace) -> int:
             [
                 experiment.name,
                 experiment.bucket or "-",
+                spec.group(experiment.path),
                 experiment.kind,
                 experiment.model,
+                plan_mod.topology_summary(runs),
                 len(runs),
                 util.human_duration(plan_mod.estimate_seconds(runs)),
             ]
         )
-    print(util.table(["name", "bucket", "kind", "model", "configs", "≈ time"], rows))
+    print(
+        util.table(
+            ["name", "bucket", "group", "kind", "model", "gpus", "configs", "≈ time"], rows
+        )
+    )
     return 0
 
 
@@ -394,6 +648,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_run_args(run_parser)
     run_parser.set_defaults(func=cmd_run)
+    run_parser.add_argument(
+        "--queue",
+        action="store_true",
+        help="enqueue this run to execute after the currently active run/sweep",
+    )
 
     render_parser = subparsers.add_parser(
         "render", help="print the manifests a run would apply, without applying them"
@@ -434,6 +693,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     runs_parser.set_defaults(func=cmd_runs)
 
+    show_parser = subparsers.add_parser(
+        "show", help="everything recorded about one run: config, engine facts, files"
+    )
+    show_parser.add_argument("tag", help="run tag, or a unique substring of one")
+    show_parser.set_defaults(func=cmd_show)
+
     compare_parser = subparsers.add_parser(
         "compare", help="head-to-head deltas between two runs"
     )
@@ -445,6 +710,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="server, jobs and recent runs")
     status_parser.set_defaults(func=cmd_status)
+
+    queue_parser = subparsers.add_parser(
+        "queue", help="show queue, start worker, or remove queued jobs by position"
+    )
+    queue_parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["start", "rm"],
+        help="'start' runs queued jobs now when idle; 'rm' removes one queued position",
+    )
+    queue_parser.add_argument(
+        "position",
+        nargs="?",
+        type=int,
+        help="queue position to remove (used with: ./bench queue rm <position>)",
+    )
+    queue_parser.set_defaults(func=cmd_queue)
 
     pull_parser = subparsers.add_parser(
         "pull", help="copy raw result files off the results PVC"

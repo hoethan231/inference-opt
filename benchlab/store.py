@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterator
 
-from . import settings, util
+from . import parallelism, settings, util
 
 SUCCESS = "success"
 FAILED = "failed"
@@ -64,6 +64,16 @@ class RunRecord:
     finished_at: str = ""
     run_dir: str = ""
     note: str = ""
+
+    @property
+    def topology(self) -> parallelism.Topology:
+        """The GPU shape this attempt ran on, derived from its own config.
+
+        Derived rather than stored so it cannot disagree with the params that were
+        actually applied, and so runs recorded before multi-GPU support read
+        correctly: they have no parallelism keys, and they were all single-GPU.
+        """
+        return parallelism.of(self.params)
 
     def to_json(self) -> dict[str, Any]:
         return dataclasses.asdict(self)

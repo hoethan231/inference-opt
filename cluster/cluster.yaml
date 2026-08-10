@@ -27,14 +27,22 @@ hf_secret: hf-token-secret
 # can't fill up from — or be cleared alongside — other work on this cluster.
 results_pvc: vllm-sweep-results-pvc
 model_cache_pvc_storage: 2000Gi
+external_results_pvc: vllm-sweep-results-external-pvc
 
 # Where the Jobs mount the results volume, and where the engine mounts weights.
 results_mount: /app/results
 model_mount: /models
 
-# Other engines on this single-GPU cluster that must be scaled to 0 before we
-# can deploy. Any *other* GPU-requesting pod is detected dynamically and waited
-# on instead (see `bench run --gpu-wait-timeout`).
+# GPUs on the node our engine lands on. A pod's GPUs all come from one node, so
+# this is the ceiling on TENSOR x PIPELINE x DATA for any single config, and
+# `bench run` refuses a config that asks for more instead of letting the pod sit
+# Pending. Declared rather than discovered so `--dry-run` and `bench render`
+# still need no cluster access.
+gpus_per_node: 2
+
+# Other engines sharing those GPUs. They are scaled to 0 only when the run
+# actually needs the devices they are holding; any *other* GPU-requesting pod is
+# detected dynamically and waited on instead (see `bench run --gpu-wait-timeout`).
 gpu_rivals:
   - kind: deployment
     name: sglang-nemotron
@@ -43,7 +51,7 @@ gpu_rivals:
 
 images:
   # Default engine image. A model file can pin its own with `image:`.
-  vllm: vllm/vllm-openai:v0.26.0
+  vllm: vllm/vllm-openai:v0.23.0
   guidellm: ghcr.io/vllm-project/guidellm:v0.7.0
   # Used for the weight-cache probe and the results reader/cleaner pods.
   utility: busybox:1.36
@@ -56,3 +64,5 @@ timeouts:
   job_start_s: 300
   probe_s: 600
   preseed_s: 10800
+  bench_slack_pct: 350
+  bench_slack_s: 900

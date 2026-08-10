@@ -8,18 +8,20 @@ smuggled back through an exit code.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
-from . import engine, render, util
+from . import engine, parallelism, render, util
 from .model_registry import Model
 from .plan import Run
 from .settings import Cluster
@@ -46,6 +48,19 @@ class JobOutcome:
     detail: str = ""
 
 
+def _gpu_request(container: dict[str, Any]) -> int:
+    """GPUs one container holds. Extended resources can be declared either side."""
+    resources = container.get("resources", {}) or {}
+    for section in ("requests", "limits"):
+        value = (resources.get(section) or {}).get("nvidia.com/gpu")
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 1
+    return 0
+
+
 class Kube:
     def __init__(self, cluster: Cluster, *, dry_run: bool = False) -> None:
         self.cluster = cluster
@@ -54,17 +69,22 @@ class Kube:
             util.die("kubectl not found on PATH")
 
     # -- plumbing ---------------------------------------------------------
-    def _kubectl(
+    def _run(
         self,
         args: list[str],
         *,
         stdin: str | None = None,
-        check: bool = True,
         timeout: int | None = 300,
-    ) -> str:
+    ) -> subprocess.CompletedProcess[str]:
+        """Run kubectl and hand back the whole result, stderr included.
+
+        `_kubectl` yields stdout alone, which is what callers that parse output
+        want but throws away *why* a command failed: a failed `exec` prints
+        nothing on stdout, so its entire diagnostic lives in stderr.
+        """
         cmd = ["kubectl", "-n", self.cluster.namespace, *args]
         try:
-            proc = subprocess.run(
+            return subprocess.run(
                 cmd,
                 input=stdin,
                 capture_output=True,
@@ -73,7 +93,18 @@ class Kube:
             )
         except subprocess.TimeoutExpired:
             raise KubectlError(f"timed out after {timeout}s: {' '.join(cmd)}") from None
+
+    def _kubectl(
+        self,
+        args: list[str],
+        *,
+        stdin: str | None = None,
+        check: bool = True,
+        timeout: int | None = 300,
+    ) -> str:
+        proc = self._run(args, stdin=stdin, timeout=timeout)
         if check and proc.returncode != 0:
+            cmd = ["kubectl", "-n", self.cluster.namespace, *args]
             raise KubectlError(
                 f"{' '.join(cmd)} failed ({proc.returncode}): "
                 f"{(proc.stderr or proc.stdout).strip()}"
@@ -166,7 +197,13 @@ class Kube:
             )
 
     def ensure_results_pvc(self) -> None:
-        self.apply(render.results_pvc(self.cluster))
+        self.apply(render.results_pvc(self.cluster, pvc_name=self.cluster.results_pvc))
+        if self.cluster.external_results_pvc != self.cluster.results_pvc:
+            self.apply(
+                render.results_pvc(
+                    self.cluster, pvc_name=self.cluster.external_results_pvc
+                )
+            )
 
     def ensure_model_cache_pvc(self, model: Model) -> None:
         self.apply(render.model_cache_pvc(self.cluster, model))
@@ -179,9 +216,35 @@ class Kube:
     def apply_workloads(self, workloads: list[Workload]) -> None:
         self.apply(render.workloads_configmap(self.cluster, workloads))
 
-    # -- the single GPU ---------------------------------------------------
-    def foreign_gpu_holders(self) -> list[str]:
-        """Pods holding the GPU that aren't our engine."""
+    def host_facts(self, node_name: str) -> dict[str, Any]:
+        """Which machine a run actually landed on.
+
+        A sweep only means anything if consecutive runs share a substrate, and
+        these nodes get recycled and driver-upgraded underneath us. Recording the
+        host makes an environment change visible as an environment change,
+        instead of looking like a regression in whatever config was being swept.
+        """
+        if not node_name:
+            return {}
+        try:
+            node = self.get_json("get", "node", node_name)
+        except KubectlError:
+            return {}
+        labels = node.get("metadata", {}).get("labels", {}) or {}
+        facts: dict[str, Any] = {"node": node_name}
+        for key, label in (
+            ("gpu_product", "nvidia.com/gpu.product"),
+            ("gpu_memory_mib", "nvidia.com/gpu.memory"),
+            ("gpu_count", "nvidia.com/gpu.count"),
+            ("gpu_driver", "nvidia.com/cuda.driver-version.full"),
+        ):
+            if label in labels:
+                facts[key] = labels[label]
+        return facts
+
+    # -- sharing the GPUs -------------------------------------------------
+    def foreign_gpu_holders(self) -> list[tuple[str, int]]:
+        """(description, GPU count) for every live pod holding GPUs but ours."""
         pods = self.get_json("get", "pods").get("items", [])
         holders = []
         for pod in pods:
@@ -195,36 +258,70 @@ class Kube:
             phase = pod.get("status", {}).get("phase", "?")
             if phase in ("Succeeded", "Failed"):
                 continue
-            for container in pod.get("spec", {}).get("containers", []):
-                requests = (container.get("resources", {}) or {}).get("requests", {}) or {}
-                if "nvidia.com/gpu" in requests:
-                    holders.append(f"{name} ({phase})")
-                    break
+            held = sum(
+                _gpu_request(container)
+                for container in pod.get("spec", {}).get("containers", [])
+            )
+            if held:
+                holders.append((f"{name} ({phase}, {held} GPU)", held))
         return holders
 
-    def wait_for_free_gpu(self, timeout_s: int) -> bool:
+    def free_gpus(self) -> tuple[int, list[str]]:
+        """How many GPUs are available to us, and who is sitting on the rest.
+
+        Our own engine pod does not count against us: it is replaced, not joined,
+        so with strategy Recreate its devices come back before the new pod starts.
+        """
+        holders = self.foreign_gpu_holders()
+        taken = sum(count for _, count in holders)
+        return max(0, self.cluster.gpus_per_node - taken), [name for name, _ in holders]
+
+    def ensure_gpus(self, needed: int, timeout_s: int) -> bool:
+        """Get `needed` GPUs free, scaling down known rivals only if we must.
+
+        A two-GPU node makes "is the GPU free" the wrong question: a colleague's
+        single-GPU job can coexist with a single-GPU run of ours, and scaling it
+        down to take a device we do not need is just rude. Rivals therefore get
+        scaled down when the arithmetic says we are short, and not before.
+        """
+        free, holders = self.free_gpus()
+        if free >= needed:
+            if holders:
+                util.step(
+                    f"{free} of {self.cluster.gpus_per_node} GPU(s) free, enough for this "
+                    f"config; leaving {', '.join(holders)} alone"
+                )
+            return True
+
+        util.step(
+            f"need {needed} GPU(s), {free} free — scaling down known engines: "
+            f"{', '.join(r.get('name', '?') for r in self.cluster.gpu_rivals) or '(none)'}"
+        )
+        self.scale_down_rivals()
+
         deadline = time.time() + timeout_s
         warned = False
         while True:
-            holders = self.foreign_gpu_holders()
-            if not holders:
+            free, holders = self.free_gpus()
+            if free >= needed:
                 return True
             if time.time() >= deadline:
                 util.warn(
-                    f"GPU still held by {', '.join(holders)} after "
-                    f"{util.human_duration(timeout_s)}; deploying anyway"
+                    f"still only {free} of {needed} GPU(s) free after "
+                    f"{util.human_duration(timeout_s)} (held by {', '.join(holders)}); "
+                    f"deploying anyway"
                 )
                 return False
             if not warned:
                 util.step(
-                    f"GPU held by another workload ({', '.join(holders)}); waiting up to "
-                    f"{util.human_duration(timeout_s)} — this is a shared single-GPU cluster"
+                    f"waiting up to {util.human_duration(timeout_s)} for "
+                    f"{', '.join(holders)} to release {needed - free} more GPU(s)"
                 )
                 warned = True
             time.sleep(20)
 
-    def free_gpu(self) -> None:
-        """Scale down the other engines that share this GPU."""
+    def scale_down_rivals(self) -> None:
+        """Scale the other engines sharing these GPUs to zero and wait for them."""
         for rival in self.cluster.gpu_rivals:
             kind, name = rival.get("kind", "deployment"), rival.get("name")
             if not name:
@@ -288,10 +385,12 @@ class Kube:
             )
 
     # -- the engine -------------------------------------------------------
-    def server_pod(self) -> dict[str, Any] | None:
+    def server_pod(self, *, exclude_uid: str | None = None) -> dict[str, Any] | None:
         pods = self.get_json(
             "get", "pods", "-l", f"app={self.cluster.app_label}"
         ).get("items", [])
+        if exclude_uid:
+            pods = [p for p in pods if p.get("metadata", {}).get("uid") != exclude_uid]
         if not pods:
             return None
         return sorted(
@@ -314,6 +413,10 @@ class Kube:
         a pod that OOMed at startup crash-loops, so this polls the pod and bails
         out as soon as the log or the container state says it will never be Ready.
         """
+        # Capture the outgoing pod identity first so the readiness loop cannot
+        # accidentally report the previous pod as the new run.
+        outgoing = self.server_pod()
+        outgoing_uid = (outgoing or {}).get("metadata", {}).get("uid")
         self.teardown_server()
         reclaim_delay_s = 20
         util.step(
@@ -328,8 +431,11 @@ class Kube:
         last_note = ""
         restarts_seen = 0
         while time.time() < deadline:
-            pod = self.server_pod()
+            pod = self.server_pod(exclude_uid=outgoing_uid)
             if pod is None:
+                if last_note != "replacing":
+                    util.step(f"waiting for {self.cluster.deployment}: replacing pod")
+                    last_note = "replacing"
                 time.sleep(5)
                 continue
             name = pod.get("metadata", {}).get("name", "")
@@ -344,7 +450,9 @@ class Kube:
                 log = self.pod_logs(name)
                 elapsed = time.time() - started
                 util.ok(f"server Ready in {util.human_duration(elapsed)} ({name})")
-                return DeployOutcome(True, "ready", log=log, facts=engine.facts(log))
+                facts = engine.facts(log)
+                facts.update(self.host_facts(pod.get("spec", {}).get("nodeName", "")))
+                return DeployOutcome(True, "ready", log=log, facts=facts)
 
             waiting = (state.get("waiting") or {}).get("reason", "")
             if waiting in ("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
@@ -384,7 +492,7 @@ class Kube:
                 last_note = note
             time.sleep(10)
 
-        pod = self.server_pod()
+        pod = self.server_pod(exclude_uid=outgoing_uid)
         log = self.pod_logs(pod["metadata"]["name"]) if pod else ""
         return DeployOutcome(
             False,
@@ -422,20 +530,78 @@ class Kube:
             "print('OK', served)\n"
         )
         try:
-            out = self._kubectl(
-                ["exec", name, "--", "python3", "-c", script],
-                check=True,
-                timeout=timeout_s,
+            proc = self._run(
+                ["exec", name, "--", "python3", "-c", script], timeout=timeout_s
             )
         except KubectlError as exc:
             return False, str(exc)
+        out = (proc.stdout or "").strip()
         if "OK" in out:
-            return True, out.strip().splitlines()[-1]
-        return False, (out.strip() or "smoke test produced no output").splitlines()[-1]
+            return True, out.splitlines()[-1]
+        # The failure is almost always on stderr: an assertion from the script
+        # above, or kubectl itself reporting that the container went away.
+        detail = "\n".join(t for t in (out, (proc.stderr or "").strip()) if t)
+        if not detail:
+            return False, f"exec into {name} exited {proc.returncode} with no output"
+        return False, detail.splitlines()[-1]
+
+    @contextlib.contextmanager
+    def engine_trace(self, log_path: Path) -> Iterator[None]:
+        """Record the engine's own log for as long as the block runs.
+
+        `server.log` is captured the instant the pod reports Ready, so it stops
+        before any load arrives. When a benchmark stalls rather than errors, the
+        evidence — KV cache usage, queue depth, prefill throughput — exists only
+        in the engine log *during* the run, and was being thrown away.
+        """
+        pod = self.server_pod()
+        if pod is None:
+            yield
+            return
+        name = pod.get("metadata", {}).get("name", "")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        sink = open(log_path, "a", encoding="utf-8")
+        sink.write(f"\n===== engine trace: {name} =====\n")
+        sink.flush()
+        proc = subprocess.Popen(
+            ["kubectl", "-n", self.cluster.namespace, "logs", "-f", name, "--since=1s"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        def pump() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                sink.write(line)
+                # Flushed per line: this trace exists to explain runs that get
+                # killed, so buffered output is output we never see.
+                sink.flush()
+
+        thread = threading.Thread(target=pump, daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            thread.join(timeout=15)
+            sink.close()
 
     # -- benchmark jobs ---------------------------------------------------
-    def reap_stale_bench_pods(self) -> None:
-        pods = self.get_json("get", "pods", "-l", "app=guidellm").get("items", [])
+    def reap_stale_bench_pods(self, run_tag: str) -> None:
+        """Clear only this run's non-terminal benchmark pods.
+
+        Different sweeps can run in parallel; deleting every live `app=guidellm`
+        pod would kill another run's in-flight workload.
+        """
+        pods = self.get_json(
+            "get", "pods", "-l", f"app=guidellm,bench.tag={run_tag}"
+        ).get("items", [])
         stale = [
             p["metadata"]["name"]
             for p in pods
@@ -446,12 +612,21 @@ class Kube:
             self.delete("pod", name, force=True, wait=False)
 
     def run_benchmark(
-        self, run: Run, workload: Workload, log_path: Path, *, echo: bool = True
+        self,
+        run: Run,
+        workload: Workload,
+        log_path: Path,
+        *,
+        echo: bool = True,
+        service_url: str | None = None,
+        api_key: str | None = None,
     ) -> JobOutcome:
         name = render.job_name(run, workload)
-        manifest = render.benchmark_job(self.cluster, run, workload)
+        manifest = render.benchmark_job(
+            self.cluster, run, workload, service_url=service_url, api_key=api_key
+        )
         util.step(f"workload '{workload.name}' -> job/{name}")
-        self.reap_stale_bench_pods()
+        self.reap_stale_bench_pods(run.tag)
         self.delete("job", name, wait=True)
         self.apply(manifest)
 
@@ -469,7 +644,7 @@ class Kube:
             timeout=start_timeout + 30,
         )
         self._stream_logs(f"job/{name}", log_path, echo=echo)
-        return self._await_job(name)
+        return self._await_job(name, deadline_s=render.job_deadline(self.cluster, workload))
 
     def _stream_logs(self, target: str, log_path: Path | None, *, echo: bool) -> None:
         cmd = ["kubectl", "-n", self.cluster.namespace, "logs", "-f", target]
@@ -494,21 +669,59 @@ class Kube:
             if sink is not None:
                 sink.close()
 
-    def _await_job(self, name: str, *, poll_s: int = 10, grace_s: int = 600) -> JobOutcome:
+    def _await_job(
+        self,
+        name: str,
+        *,
+        poll_s: int = 10,
+        grace_s: int = 600,
+        deadline_s: int | None = None,
+        reason_wait_s: int = 60,
+    ) -> JobOutcome:
+        """Wait for the Job to reach a terminal state, and say why it got there.
+
+        `status.failed` flips as soon as the pod fails, but the Job-level
+        `Failed` condition carrying the reason (DeadlineExceeded,
+        BackoffLimitExceeded) is written a moment later. Returning on `failed`
+        alone therefore reported every failure as an unexplained one — which is
+        how a sweep killed by its own activeDeadlineSeconds looked identical to
+        a benchmark that crashed.
+        """
         deadline = time.time() + grace_s
+        reason_deadline: float | None = None
         while time.time() < deadline:
-            job = self.get_json("get", "job", name)
-            status = job.get("status", {}) or {}
+            status = self.get_json("get", "job", name).get("status", {}) or {}
             if int(status.get("succeeded") or 0) > 0:
                 return JobOutcome(True, "complete")
             if int(status.get("failed") or 0) > 0:
-                reason = ""
-                for cond in status.get("conditions") or []:
-                    if cond.get("type") == "Failed":
-                        reason = cond.get("reason") or cond.get("message") or ""
-                return JobOutcome(False, "bench", detail=reason or "benchmark Job failed")
+                explained = self._job_failure(status, deadline_s)
+                if explained:
+                    return JobOutcome(False, "bench", detail=explained)
+                if reason_deadline is None:
+                    reason_deadline = time.time() + reason_wait_s
+                elif time.time() >= reason_deadline:
+                    return JobOutcome(
+                        False, "bench", detail="benchmark Job failed (no reason reported)"
+                    )
             time.sleep(poll_s)
         return JobOutcome(False, "bench", detail="Job neither completed nor failed in time")
+
+    @staticmethod
+    def _job_failure(status: dict[str, Any], deadline_s: int | None) -> str:
+        """The Failed condition's reason and message, once Kubernetes writes it."""
+        for cond in status.get("conditions") or []:
+            if cond.get("type") != "Failed" or cond.get("status") != "True":
+                continue
+            reason = cond.get("reason") or ""
+            message = cond.get("message") or ""
+            detail = ": ".join(part for part in (reason, message) if part)
+            if reason == "DeadlineExceeded" and deadline_s:
+                detail += (
+                    f" — killed at its {util.human_duration(deadline_s)} ceiling, so it "
+                    f"wrote no results; the workload made no progress or needs longer"
+                )
+            return detail or "benchmark Job failed"
+        return ""
 
     # -- results ----------------------------------------------------------
     def _utility_pod(
@@ -555,11 +768,15 @@ class Kube:
             ["wait", "--for=condition=Ready", f"pod/{name}", "--timeout=180s"], timeout=200
         )
 
-    def pull(self, glob: str, dest: Path, *, quiet: bool = False) -> list[str]:
+    def pull(
+        self, glob: str, dest: Path, *, quiet: bool = False, pvc: str | None = None
+    ) -> list[str]:
         """Copy result files off the results PVC via a throwaway reader pod."""
         pod = "bench-reader"
         dest.mkdir(parents=True, exist_ok=True)
-        self._utility_pod(pod, self.cluster.results_pvc, "/data", read_only=True)
+        self._utility_pod(
+            pod, pvc or self.cluster.results_pvc, "/data", read_only=True
+        )
         try:
             listing = self._kubectl(
                 ["exec", pod, "--", "sh", "-c", f"ls /data/{glob} 2>/dev/null"], check=False
@@ -694,12 +911,15 @@ class Kube:
         else:
             lines.append(f"{self.cluster.deployment}: not deployed")
         pods = self.get_json("get", "pods", "-l", f"app={self.cluster.app_label}").get("items", [])
+        ours = 0
         for pod in pods:
             meta, status = pod.get("metadata", {}), pod.get("status", {})
             containers = status.get("containerStatuses") or [{}]
+            held = sum(_gpu_request(c) for c in pod.get("spec", {}).get("containers", []))
+            ours += held
             lines.append(
                 f"  pod {meta.get('name')}: {status.get('phase')} "
-                f"restarts={containers[0].get('restartCount', 0)} "
+                f"gpus={held} restarts={containers[0].get('restartCount', 0)} "
                 f"node={pod.get('spec', {}).get('nodeName', '?')}"
             )
         cm = self.get_json("get", "configmap", self.cluster.params_configmap)
@@ -709,8 +929,20 @@ class Kube:
             lines.append(
                 f"live config: tag={labels.get('bench.tag', '?')} "
                 f"model={data.get('SERVED_MODEL_NAME', '?')} "
+                f"topology={parallelism.of(data).label} "
                 f"mns={data.get('MAX_NUM_SEQS', '?')} mnbt={data.get('MAX_NUM_BATCHED_TOKENS', '?')}"
             )
+        # Two different counts, because they answer different questions: what is
+        # idle right now, and what the next run can have. Our own engine's devices
+        # belong in the second — a redeploy takes the pod down before it starts the
+        # replacement — which is why they are named separately rather than summed.
+        free, holders = self.free_gpus()
+        lines.append(
+            f"GPUs: {self.cluster.gpus_per_node} on the node, {free} available to the "
+            f"next run"
+            + (f" ({ours} held by our engine, released on redeploy)" if ours else "")
+            + (f", {', '.join(holders)} held by others" if holders else "")
+        )
         return lines
 
     def bench_jobs(self) -> list[tuple[str, str, str]]:
