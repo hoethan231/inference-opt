@@ -1,0 +1,13 @@
+# A single run of the current defaults. The reference point everything else is
+# compared against, and the fastest way to check the cluster is healthy.
+#
+#   ./bench run baseline
+
+name: baseline-xs
+description: Current default config for Laguna XS.
+bucket: rtx6000-tp1-xs
+model: laguna-xs-2.1
+workloads: [sync, sweep]
+
+strategy:
+  kind: single
