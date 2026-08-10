@@ -71,21 +71,16 @@ class Experiment:
     def resolved(self) -> tuple[dict[str, str], list[str], model_registry.Model]:
         """Base ConfigMap params and flag list for this experiment's model.
 
-        Precedence: cluster/params-base.yaml < model < experiment < (axis, later).
+        Precedence: model < experiment < (axis, later).
         Model identity is applied last so an experiment can't silently serve a
         different checkpoint than the one named in its `model:` field.
         """
         model = model_registry.load(self.model)
-        base_raw = yaml.safe_load(settings.PARAMS_BASE_YAML.read_text()) or {}
-        params: dict[str, str] = {
-            k: str(v) for k, v in (base_raw.get("params") or {}).items()
-        }
-        params.update(model.params)
+        params: dict[str, str] = dict(model.params)
         params.update(self.params)
         params.update(model.identity_params())
 
-        extra_args = [str(a) for a in (base_raw.get("extra_args") or [])]
-        extra_args += model.extra_args
+        extra_args = list(model.extra_args)
         extra_args += self.extra_args
         return params, extra_args, model
 

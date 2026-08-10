@@ -12,7 +12,6 @@ REPO = Path(__file__).resolve().parent.parent
 
 CLUSTER_DIR = REPO / "cluster"
 CLUSTER_YAML = CLUSTER_DIR / "cluster.yaml"
-PARAMS_BASE_YAML = CLUSTER_DIR / "params-base.yaml"
 DEPLOYMENT_TEMPLATE = CLUSTER_DIR / "deployments" / "vllm.yaml"
 RESULTS_PVC_TEMPLATE = CLUSTER_DIR / "deployments" / "results-pvc.yaml"
 BENCH_JOB_TEMPLATE = CLUSTER_DIR / "jobs" / "benchmark.yaml"

@@ -118,7 +118,7 @@ and the group only has to be spelled out if two groups hold the same name.
 Lowest precedence to highest:
 
 ```
-cluster/params-base.yaml  <  models/<model>.yaml  <  experiments/**/<exp>.yaml  <  the axis value
+models/<model>.yaml  <  experiments/**/<exp>.yaml  <  the axis value
 ```
 
 Model identity (`MODEL_NAME`, `SERVED_MODEL_NAME`) is applied last and can't be
@@ -320,7 +320,6 @@ models/*.yaml             # which model, and what it needs
 workloads/                # GuideLLM scenarios + index.yaml
 cluster/
   cluster.yaml            # every Kubernetes object name, in one file
-  params-base.yaml        # engine defaults (lowest precedence)
   deployments/            # vLLM Deployment + Service, results PVC
   jobs/                   # benchmark Job, weight pre-seed Job
 runs/
@@ -391,7 +390,7 @@ editing the Deployment:
 | `VLLM_ATTENTION_BACKEND` | read as an env var; empty means vLLM auto-selects |
 | `EXTRA_ARGS` | appended verbatim — the escape hatch for everything else |
 
-`EXTRA_ARGS` is composed from the `extra_args` lists (base, then model, then
+`EXTRA_ARGS` is composed from the `extra_args` lists (model, then
 experiment, then axis) and never set directly, which is how configs used to drift
 apart. The entrypoint splits it with `eval set --`, so a flag whose value
 contains spaces or JSON survives.
