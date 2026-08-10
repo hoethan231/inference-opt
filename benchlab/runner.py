@@ -396,7 +396,9 @@ def _collect_results(
 ) -> dict[str, str]:
     """Pull this run's files off the PVC and file them under the run directory."""
     util.step("pulling results")
-    kube.pull(f"{run.tag}__*", run_dir, quiet=False)
+    cluster = settings.Cluster.load()
+    pvc = cluster.external_results_pvc if run.strategy == "external" else cluster.results_pvc
+    kube.pull(f"{run.tag}__*", run_dir, quiet=False, pvc=pvc)
     results: dict[str, str] = {}
     for workload in workloads:
         stem = render.output_base(run, workload)
@@ -535,13 +537,8 @@ def _validate_endpoint(endpoint: str) -> None:
             f"invalid endpoint '{endpoint}'. Expected a full URL like "
             "https://host or https://host/prefix"
         )
-    if parsed.path.rstrip("/").endswith("/chat/completions"):
-        util.die(
-            "external endpoint must be a base URL, not the chat-completions route. "
-            "Use the server root/prefix only (for example "
-            "'https://10.160.7.93/enterpriseai'), because workloads already append "
-            "'/v1/chat/completions'."
-        )
+    if not (parsed.path or "").strip("/"):
+        return
 
 
 class _noop_trace:
@@ -599,3 +596,11 @@ def external_manifest_path(path_or_name: str) -> Path:
         if relative.exists():
             return relative
     return candidate
+
+
+def is_external_manifest(path: Path) -> bool:
+    """True when a manifest lives under experiments/external/."""
+    try:
+        return path.resolve().is_relative_to((settings.EXPERIMENTS_DIR / "external").resolve())
+    except (OSError, ValueError):
+        return False

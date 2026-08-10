@@ -154,7 +154,7 @@ def _options(args: argparse.Namespace) -> runner.Options:
 def cmd_run(args: argparse.Namespace) -> int:
     options = _options(args)
     external_manifest = runner.external_manifest_path(args.experiment)
-    if external_manifest.exists():
+    if external_manifest.exists() and runner.is_external_manifest(external_manifest):
         options.external = True
         return runner.run_external_manifest(str(external_manifest), options)
 

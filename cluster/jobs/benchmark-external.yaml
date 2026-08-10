@@ -1,12 +1,8 @@
 # =============================================================================
 # External benchmark Job template.
 #
-# This is intentionally hardcoded for the NAI enterprise endpoint shape used by
-# this repo's external experiments:
-#   target         = https://10.160.7.93
-#   request_format = /enterpriseai/v1/chat/completions
-#
-# The run still supplies tag/workload/output names and API key.
+# External runs still use a dedicated template, but target endpoint values come
+# from the external manifest selected by `bench run`.
 # =============================================================================
 apiVersion: batch/v1
 kind: Job
@@ -60,8 +56,8 @@ spec:
               with open("/workloads/__SCENARIO_FILE__") as f:
                   scenario = json.load(f)
               backend = scenario.setdefault("spec", {}).setdefault("backend", {})
-              backend["target"] = "https://10.160.7.93/enterpriseai"
-              backend["request_format"] = "/v1/chat/completions"
+              backend["target"] = "__EXTERNAL_TARGET__"
+              backend["request_format"] = "__EXTERNAL_REQUEST_FORMAT__"
               backend["validate_backend"] = False
               backend["model"] = "__OPENAI_MODEL__"
               backend["api_key"] = os.environ.get("OPENAI_API_KEY", "")
@@ -69,7 +65,7 @@ spec:
               with open("/tmp/scenario.json", "w") as f:
                   json.dump(scenario, f)
               PY
-              echo "GuideLLM workload '__WORKLOAD_LABEL__' -> https://10.160.7.93/enterpriseai/v1/chat/completions  (tag __TAG_LABEL__)"
+              echo "GuideLLM workload '__WORKLOAD_LABEL__' -> __EXTERNAL_FULL_ENDPOINT__  (tag __TAG_LABEL__)"
               exec guidellm run \
                 --scenario /tmp/scenario.json \
                 --tokenizer "{\"kind\":\"huggingface_auto\",\"model\":\"${MODEL_NAME}\",\"load_kwargs\":{\"trust_remote_code\":true}}" \
@@ -92,7 +88,7 @@ spec:
       volumes:
         - name: results
           persistentVolumeClaim:
-            claimName: __RESULTS_PVC__
+            claimName: __EXTERNAL_RESULTS_PVC__
         - name: workloads
           configMap:
             name: __WORKLOADS_CONFIGMAP__

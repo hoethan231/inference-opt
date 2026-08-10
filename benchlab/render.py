@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -45,6 +46,7 @@ def _common(cluster: Cluster) -> dict[str, str]:
         "WORKLOADS_CONFIGMAP": cluster.workloads_configmap,
         "HF_SECRET": cluster.hf_secret,
         "RESULTS_PVC": cluster.results_pvc,
+        "EXTERNAL_RESULTS_PVC": cluster.external_results_pvc,
         "RESULTS_MOUNT": cluster.results_mount,
         "MODEL_MOUNT": cluster.model_mount,
         "SERVICE_URL": cluster.service_url,
@@ -105,8 +107,11 @@ def deployment(cluster: Cluster, model: Model, run: Run) -> str:
     return _substitute(settings.DEPLOYMENT_TEMPLATE, values)
 
 
-def results_pvc(cluster: Cluster) -> str:
-    return _substitute(settings.RESULTS_PVC_TEMPLATE, _common(cluster))
+def results_pvc(cluster: Cluster, *, pvc_name: str | None = None) -> str:
+    values = _common(cluster)
+    if pvc_name:
+        values["RESULTS_PVC"] = pvc_name
+    return _substitute(settings.RESULTS_PVC_TEMPLATE, values)
 
 
 def job_name(run: Run, workload: Workload) -> str:
@@ -167,7 +172,30 @@ def benchmark_job(
         if external
         else settings.BENCH_JOB_TEMPLATE
     )
+    if external:
+        target, request_format = _external_backend(service_url or "")
+        values["EXTERNAL_TARGET"] = target
+        values["EXTERNAL_REQUEST_FORMAT"] = request_format
+        values["EXTERNAL_FULL_ENDPOINT"] = f"{target.rstrip('/')}{request_format}"
     return _substitute(template, values)
+
+
+def _external_backend(endpoint: str) -> tuple[str, str]:
+    """Map an external endpoint to GuideLLM target/request_format fields.
+
+    GuideLLM accepts canonical request formats like '/v1/chat/completions', so
+    enterprise prefixes (for example '/enterpriseai') must live in `target`.
+    """
+    parsed = urlparse(endpoint)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/v1/chat/completions"):
+        target = base + path[: -len("/v1/chat/completions")]
+        return target.rstrip("/"), "/v1/chat/completions"
+    if not path:
+        return base, "/v1/chat/completions"
+    # Endpoint is a base prefix like '/enterpriseai'.
+    return base + path, "/v1/chat/completions"
 
 
 def preseed_job(cluster: Cluster, model: Model, node: str) -> str:

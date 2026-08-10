@@ -183,6 +183,7 @@ def _record_fields(record: RunRecord) -> dict[str, Any]:
         "topology": record.topology.label,
         "gpus": record.topology.gpus,
         "derived_axis": False,
+        "axis_context": "",
     }
 
 
@@ -192,6 +193,21 @@ def _external_axes_from_tag(tag: str) -> list[tuple[str, str]]:
     if len(parts) < 2 or len(parts) % 2 != 0:
         return []
     return [(parts[i], parts[i + 1]) for i in range(0, len(parts), 2)]
+
+
+def _axes_from_label(label: str) -> list[tuple[str, str]]:
+    """Parse axis labels like `MAX_NUM_SEQS=64, MAX_NUM_BATCHED_TOKENS=1024`."""
+    pairs: list[tuple[str, str]] = []
+    for part in str(label or "").split(","):
+        item = part.strip()
+        if not item or "=" not in item:
+            continue
+        axis, value = item.split("=", 1)
+        axis = axis.strip()
+        value = value.strip()
+        if axis and value:
+            pairs.append((axis, value))
+    return pairs
 
 
 # Columns that qualify a measurement rather than describe it: two runs sharing an
@@ -230,6 +246,17 @@ def frame(records: list[RunRecord], *, quiet: bool = False, refresh: bool = Fals
                 derived["value"] = value
                 derived["label"] = f"{axis}={value}"
                 derived["derived_axis"] = True
+                rows.extend({**derived, **measurement} for measurement in measurements)
+        elif record.strategy == "grid":
+            pairs = _axes_from_label(record.label)
+            for axis, value in pairs:
+                others = [(a, v) for a, v in pairs if a != axis]
+                derived = dict(fields)
+                derived["param"] = axis
+                derived["value"] = value
+                derived["label"] = f"{axis}={value}"
+                derived["derived_axis"] = True
+                derived["axis_context"] = ", ".join(f"{a}={v}" for a, v in others)
                 rows.extend({**derived, **measurement} for measurement in measurements)
 
     if missing and not quiet:

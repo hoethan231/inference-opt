@@ -50,6 +50,7 @@ class Cluster:
     workloads_configmap: str
     hf_secret: str
     results_pvc: str
+    external_results_pvc: str
     results_mount: str
     model_mount: str
     gpus_per_node: int

@@ -26,6 +26,7 @@ hf_secret: hf-token-secret
 # copies files off it. Deliberately NOT the shared guidellm-results-pvc, so it
 # can't fill up from — or be cleared alongside — other work on this cluster.
 results_pvc: vllm-sweep-results-pvc
+external_results_pvc: vllm-sweep-results-external-pvc
 
 # Where the Jobs mount the results volume, and where the engine mounts weights.
 results_mount: /app/results

@@ -157,7 +157,13 @@ class Kube:
             )
 
     def ensure_results_pvc(self) -> None:
-        self.apply(render.results_pvc(self.cluster))
+        self.apply(render.results_pvc(self.cluster, pvc_name=self.cluster.results_pvc))
+        if self.cluster.external_results_pvc != self.cluster.results_pvc:
+            self.apply(
+                render.results_pvc(
+                    self.cluster, pvc_name=self.cluster.external_results_pvc
+                )
+            )
 
     def apply_params(self, run: Run) -> str:
         manifest = render.params_configmap(self.cluster, run)
@@ -669,11 +675,15 @@ class Kube:
             ["wait", "--for=condition=Ready", f"pod/{name}", "--timeout=180s"], timeout=200
         )
 
-    def pull(self, glob: str, dest: Path, *, quiet: bool = False) -> list[str]:
+    def pull(
+        self, glob: str, dest: Path, *, quiet: bool = False, pvc: str | None = None
+    ) -> list[str]:
         """Copy result files off the results PVC via a throwaway reader pod."""
         pod = "bench-reader"
         dest.mkdir(parents=True, exist_ok=True)
-        self._utility_pod(pod, self.cluster.results_pvc, "/data", read_only=True)
+        self._utility_pod(
+            pod, pvc or self.cluster.results_pvc, "/data", read_only=True
+        )
         try:
             listing = self._kubectl(
                 ["exec", pod, "--", "sh", "-c", f"ls /data/{glob} 2>/dev/null"], check=False
