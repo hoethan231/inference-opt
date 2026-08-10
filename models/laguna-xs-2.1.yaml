@@ -1,0 +1,22 @@
+# =============================================================================
+# Poolside Laguna XS 2.1 (official vLLM serving recipe).
+#
+# Official vLLM command references:
+#   --model poolside/Laguna-XS-2.1
+#   --tool-call-parser poolside_v1
+#   --reasoning-parser poolside_v1
+#   --enable-auto-tool-choice
+#   --default-chat-template-kwargs '{"enable_thinking": true}'
+# =============================================================================
+
+name: laguna-xs-2.1
+
+extends: laguna-s-2.1-base
+
+hf_repo: poolside/Laguna-XS-2.1
+
+params:
+  MAX_MODEL_LEN: "262144"
+
+extra_args_append:
+  - --default-chat-template-kwargs='{"enable_thinking": true}'
