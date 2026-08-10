@@ -7,7 +7,7 @@
 name: baseline-h100-tp2
 description: H100 TP2 baseline config, both workloads.
 bucket: h100-tp2
-model: laguna-s-2.1-fp8
+model: laguna-s-2.1-nvfp4
 workloads: [rate, concurrent]
 params:
   TENSOR_PARALLEL_SIZE: "2"

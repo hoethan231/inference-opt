@@ -247,7 +247,7 @@ def _preflight(
     # Pre-seed jobs run on the GPU node with substantial CPU/RAM requests.
     # On smaller clusters an old crashlooping server can block scheduling, so
     # free engine resources before cache probing/pre-seed.
-    kube.free_gpu()
+    kube.scale_down_rivals()
     kube.teardown_server()
     cached = kube.model_is_cached(model)
     if cached is False:

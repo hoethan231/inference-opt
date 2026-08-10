@@ -19,4 +19,4 @@ params:
   MAX_MODEL_LEN: "262144"
 
 extra_args_append:
-  - --default-chat-template-kwargs='{"enable_thinking": true}'
+  - --default-chat-template-kwargs='{"enable_thinking":true}'
