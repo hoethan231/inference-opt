@@ -1,0 +1,8 @@
+name: mns-64-mnbt-4096
+model: nemotron-3-super-120b
+request_model: nemo64-4096
+endpoint: https://10.160.7.93/enterpriseai
+apikey: "..."
+workloads: [sweep, sync]
+runs:
+  - mns-64-mnbt-4096

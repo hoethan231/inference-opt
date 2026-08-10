@@ -30,3 +30,16 @@ workloads:
     note: >-
       Short prompts, long generations: isolates decode throughput from prefill
       by shrinking prefixes and prompts while keeping outputs large.
+
+  sync:
+    file: coding-agent-sync.json
+    code: sync
+    note: >-
+      Synchronous profile at a fixed low offered rate; useful for stable
+      low-pressure latency baselines.
+
+  sweep:
+    file: coding-agent-sweep.json
+    code: sweep
+    note: >-
+      Automatic sweep profile to find max capacity.

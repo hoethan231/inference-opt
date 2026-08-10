@@ -203,9 +203,13 @@ For externally hosted gateways where the request `"model"` differs, set
 `request_model` (or `served_model`) to the remote model ID.
 
 External experiments use a dedicated benchmark Job template
-(`cluster/jobs/benchmark-external.yaml`) that is hardcoded for the NAI endpoint
-shape used here (`https://10.160.7.93/enterpriseai/v1/chat/completions`), and
-injects your `request_model` into the request body.
+(`cluster/jobs/benchmark-external.yaml`) and inject your manifest's endpoint
+and `request_model` into the scenario at runtime. This lets multiple external
+manifests target different endpoints in parallel.
+
+External benchmark jobs also write to a separate PVC (`external_results_pvc` in
+`cluster/cluster.yaml`) so they do not contend with local in-cluster sweeps on
+ReadWriteOnce storage.
 
 Manifest endpoint is reused for all runs in that file. You can still override
 the API key at runtime:

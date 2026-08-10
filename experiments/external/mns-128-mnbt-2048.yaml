@@ -1,8 +1,0 @@
-name: mns-128-mnbt-2048
-model: nemotron-3-super-120b
-request_model: nemotr-super-nvfp4
-endpoint: https://10.160.7.93/enterpriseai
-apikey: "..."
-workloads: [rate]
-runs:
-  - mns-128-mnbt-2048

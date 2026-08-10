@@ -1,0 +1,11 @@
+name: vllm-23
+description: vllm 0.23.0 with MNS=64 and MNBT=4096.
+model: nemotron-3-super-120b
+workloads: [rate, concurrent]
+
+params:
+  MAX_NUM_SEQS: "64"
+  MAX_NUM_BATCHED_TOKENS: "4096"
+
+strategy:
+  kind: single

@@ -1,1 +1,0 @@
-./bench run experiments/external/mns-128-mnbt-2048.yaml --external-api-key "5a19a7c4-30b4-454a-b18a-c304db71828f"
