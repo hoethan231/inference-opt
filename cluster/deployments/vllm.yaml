@@ -83,7 +83,7 @@ spec:
             requests:
               nvidia.com/gpu: __GPU_COUNT__
               cpu: "8"
-              memory: 40Gi
+              memory: 22Gi
             limits:
               nvidia.com/gpu: __GPU_COUNT__
               cpu: "8"
