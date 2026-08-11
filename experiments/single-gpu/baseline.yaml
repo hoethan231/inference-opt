@@ -4,9 +4,9 @@
 #   ./bench run baseline
 
 name: baseline
-description: Current default config, both workloads.
+description: Default nemotron 3 super 120b model with sweep workload.
 model: nemotron-3-super-120b
-workloads: [rate, concurrent]
+workloads: [sweep]
 
 strategy:
   kind: single

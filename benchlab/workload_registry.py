@@ -22,6 +22,10 @@ from . import settings, util
 # holding their target load.
 RATE_KINDS = {"poisson", "constant", "rate", "throughput", "synchronous"}
 CONCURRENT_KINDS = {"concurrent"}
+# The sweep profile generates sweep_size strategies (synchronous, throughput,
+# then interpolated rates), so it is treated as rate-oriented rather than a
+# single steady rate.
+SWEEP_KINDS = {"sweep"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,9 +64,12 @@ def _profile_shape(scenario: dict[str, Any], path: Path) -> tuple[str, list[floa
         else:
             targets = [float(rate)]
         return "rate", targets
+    if kind in SWEEP_KINDS:
+        sweep_size = int(profile.get("sweep_size") or 3)
+        return "rate", [float(i) for i in range(sweep_size)]
     util.die(
         f"{path}: unsupported profile kind '{kind}'. Known: "
-        f"{', '.join(sorted(RATE_KINDS | CONCURRENT_KINDS))}"
+        f"{', '.join(sorted(RATE_KINDS | CONCURRENT_KINDS | SWEEP_KINDS))}"
     )
 
 
