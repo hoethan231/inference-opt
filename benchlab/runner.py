@@ -441,6 +441,9 @@ def _build_external_run(
     sanitized = util.sanitize(name)
     suffix = util.sanitize(options.suffix) if options.suffix else ""
     prefixed = sanitized if sanitized.startswith("external-") else f"external-{sanitized}"
+    experiment_slug = util.sanitize(experiment)
+    if experiment_slug and experiment_slug != EXTERNAL_EXPERIMENT:
+        prefixed = f"external-{experiment_slug}-{sanitized}"
     base_tag = prefixed
     tag = f"{prefixed}-{suffix}" if suffix else prefixed
     tag = util.fit_name(tag, settings.MAX_TAG_LEN)

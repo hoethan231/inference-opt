@@ -174,6 +174,13 @@ def _run_request(experiment: str, options: runner.Options) -> int:
     return runner.run_experiment(loaded, options)
 
 
+def _is_external_request(experiment: str, options: runner.Options) -> bool:
+    if options.external:
+        return True
+    external_manifest = runner.external_manifest_path(experiment)
+    return external_manifest.exists() and runner.is_external_manifest(external_manifest)
+
+
 def _drain_queue() -> int:
     final_code = 0
     while True:
@@ -209,7 +216,11 @@ def _start_queue_worker() -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     options = _options(args)
+    is_external = _is_external_request(args.experiment, options)
     if args.queue:
+        if is_external:
+            util.warn("ignoring --queue for external runs; starting now")
+            return _run_request(args.experiment, options)
         item, position = run_queue.enqueue(args.experiment, dataclasses.asdict(options))
         util.ok(f"queued {args.experiment} as #{position} ({item.id})")
         # If nothing is running, become the queue worker and start immediately.
@@ -221,6 +232,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             finally:
                 run_queue.clear_active()
         return 0
+
+    if is_external:
+        return _run_request(args.experiment, options)
 
     active = run_queue.active_run()
     if active and active.pid != 0:
