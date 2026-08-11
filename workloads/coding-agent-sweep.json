@@ -2,7 +2,7 @@
   "metadata": {
     "labels": {
       "name": "coding-agent-throughput",
-      "description": "Coding-agent workload throughput."
+      "description": "Coding-agent workload sweep."
     }
   },
   "spec": {
@@ -22,8 +22,7 @@
     "profile": {
       "kind": "sweep",
       "sweep_size": 4,
-      "strategy_type": "poisson",
-      "max_concurrency": 64,
+      "strategy_type": "constant",
       "warmup": 30.0
     },
     "data": [
@@ -32,25 +31,25 @@
         "prefix_buckets": [
           {
             "bucket_weight": 70,
-            "prefix_count": 8,
-            "prefix_tokens": 20480
+            "prefix_count": 1,
+            "prefix_tokens": 30480
           },
           {
             "bucket_weight": 30,
-            "prefix_count": 4,
-            "prefix_tokens": 36864
+            "prefix_count": 1,
+            "prefix_tokens": 56864
           }
         ],
-        "prompt_tokens": 512,
-        "output_tokens": 512,
+        "prompt_tokens": 1024,
+        "output_tokens": 1024,
         "turns": 20,
         "tool_call_turns": 15
       }
-    ],
+    ], 
     "constraints": [
       {
         "kind": "max_duration",
-        "seconds": 300
+        "seconds": 900
       },
       {
         "kind": "max_global_error_rate",
