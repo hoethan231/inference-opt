@@ -65,8 +65,8 @@ spec:
               cpu: "4"
               memory: 8Gi
             limits:
-              cpu: "8"
-              memory: 24Gi
+              cpu: "4"
+              memory: 8Gi
           volumeMounts:
             - name: model-cache
               mountPath: __MODEL_MOUNT__
