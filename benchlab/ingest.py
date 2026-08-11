@@ -57,7 +57,7 @@ def _dist(metrics: dict[str, Any], key: str) -> dict[str, float | None]:
 
 def _target(benchmark: dict[str, Any], mode: str, index: int, targets: list[float]) -> float:
     strategy = (benchmark.get("config") or {}).get("strategy") or {}
-    if mode == "rate":
+    if mode in {"rate", "sweep"}:
         for key in ("rate", "rate_per_second"):
             if strategy.get(key) is not None:
                 return float(strategy[key])
