@@ -14,6 +14,7 @@ show, and which knob "wins" depends on what you are optimising for. The plots an
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import matplotlib
@@ -46,19 +47,29 @@ OVERVIEW_METRICS = [
     ("ttft_ms_p99", "TTFT p99 (ms)"),
     ("itl_ms_p50", "ITL p50 (ms)"),
     ("itl_ms_p99", "ITL p99 (ms)"),
+    ("tps_p50", "Total throughput p50, tokens/s"),
+    ("tps_p99", "Total throughput p99, tokens/s"),
     ("output_tps_p50", "Output throughput p50, tokens/s"),
     ("output_tps_p99", "Output throughput p99, tokens/s"),
+    ("rps_mean", "Request completion rate avg, req/s"),
+    ("error_rate_pct", "Error rate (%)"),
 ]
 
 DETAIL_P50 = [
     ("ttft_ms_p50", "TTFT p50 (ms)"),
     ("itl_ms_p50", "ITL p50 (ms)"),
+    ("tps_p50", "Total throughput p50, tokens/s"),
     ("output_tps_p50", "Output throughput p50, tokens/s"),
+    ("rps_mean", "Request completion rate avg, req/s"),
+    ("error_rate_pct", "Error rate (%)"),
 ]
 DETAIL_P99 = [
     ("ttft_ms_p99", "TTFT p99 (ms)"),
     ("itl_ms_p99", "ITL p99 (ms)"),
+    ("tps_p99", "Total throughput p99, tokens/s"),
     ("output_tps_p99", "Output throughput p99, tokens/s"),
+    ("rps_mean", "Request completion rate avg, req/s"),
+    ("error_rate_pct", "Error rate (%)"),
 ]
 
 
@@ -95,20 +106,61 @@ def _sort_key(frame: pd.DataFrame):
     return key
 
 
+def _with_report_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["error_rate_pct"] = pd.to_numeric(out["error_rate"], errors="coerce") * 100.0
+    return out
+
+
+def _fmt_metric_value(value: object) -> str:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(num):
+        return ""
+    if abs(num) >= 1000:
+        return f"{num:,.0f}"
+    if abs(num) >= 100:
+        return f"{num:.1f}"
+    if abs(num) >= 10:
+        return f"{num:.2f}"
+    return f"{num:.3f}"
+
+
 def plot_rate_overview(df: pd.DataFrame, path: Path, title: str) -> None:
     """Every run compared head-to-head at a fixed offered load."""
+    df = _with_report_metrics(df)
     ordered = df.sort_values("ttft_ms_p50")
     labels = list(ordered["series"])
     baselines = set(df[df["param"] == "baseline"]["series"])
     height = max(6.0, 0.42 * len(labels) + 4)
-    fig, axes = plt.subplots(2, 3, figsize=(20, height))
-    for ax, (column, label) in zip(axes.flat, OVERVIEW_METRICS):
-        ax.barh(labels, ordered[column], color=_colors(labels, baselines))
+    cols = 2
+    rows = int(math.ceil(len(OVERVIEW_METRICS) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(20, max(height, 3.3 * rows)))
+    flat_axes = axes.flat if hasattr(axes, "flat") else [axes]
+    for ax, (column, label) in zip(flat_axes, OVERVIEW_METRICS):
+        bars = ax.barh(labels, ordered[column], color=_colors(labels, baselines))
         ax.invert_yaxis()
         ax.set_xlabel(label)
         ax.set_title(label)
         ax.grid(axis="x", alpha=0.3)
         ax.tick_params(axis="y", labelsize=7)
+        for bar, value in zip(bars, ordered[column].tolist()):
+            text = _fmt_metric_value(value)
+            if text:
+                ax.text(
+                    bar.get_width(),
+                    bar.get_y() + bar.get_height() / 2.0,
+                    f" {text}",
+                    va="center",
+                    ha="left",
+                    fontsize=7.5,
+                    fontweight="bold",
+                    bbox=ANNOT_BBOX,
+                )
+    for ax in list(flat_axes)[len(OVERVIEW_METRICS) :]:
+        ax.axis("off")
     fig.suptitle(f"{title} — steady offered load", fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     _save(fig, path)
@@ -118,10 +170,14 @@ def plot_scaling(
     df: pd.DataFrame, path: Path, title: str, *, target_label: str = "concurrent users"
 ) -> None:
     """How each run's latency and throughput move with target load."""
+    df = _with_report_metrics(df)
     order = sorted(df["series"].unique(), key=_sort_key(df))
     baselines = set(df[df["param"] == "baseline"]["series"])
-    fig, axes = plt.subplots(2, 3, figsize=(18, 9))
-    for ax, (column, label) in zip(axes.flat, OVERVIEW_METRICS):
+    cols = 2
+    rows = int(math.ceil(len(OVERVIEW_METRICS) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(18, 3.4 * rows))
+    flat_axes = axes.flat if hasattr(axes, "flat") else [axes]
+    for ax, (column, label) in zip(flat_axes, OVERVIEW_METRICS):
         for i, series in enumerate(order):
             subset = df[df["series"] == series].sort_values("target")
             is_base = series in baselines
@@ -137,7 +193,9 @@ def plot_scaling(
         ax.set_ylabel(label)
         ax.set_title(label)
         ax.grid(alpha=0.3)
-    handles, labels = axes.flat[0].get_legend_handles_labels()
+    for ax in list(flat_axes)[len(OVERVIEW_METRICS) :]:
+        ax.axis("off")
+    handles, labels = list(flat_axes)[0].get_legend_handles_labels()
     fig.legend(
         handles,
         labels,
@@ -210,6 +268,7 @@ def plot_frontier(
 
 def plot_sweep_rps_detail(df: pd.DataFrame, path: Path, title: str) -> None:
     """Explicit per-RPS p50/p99 charts for sweep workloads."""
+    df = _with_report_metrics(df)
     order = sorted(df["series"].unique(), key=_sort_key(df))
     baselines = set(df[df["param"] == "baseline"]["series"])
     fig, axes = plt.subplots(5, 2, figsize=(16, 19))
@@ -252,35 +311,6 @@ def plot_sweep_rps_detail(df: pd.DataFrame, path: Path, title: str) -> None:
         ax.set_ylabel(label)
         ax.set_title(label)
         ax.grid(alpha=0.3)
-    error_ax = axes.flat[9]
-    for i, series in enumerate(order):
-        subset = df[df["series"] == series].sort_values("target")
-        is_base = series in baselines
-        errors_pct = subset["error_rate"] * 100.0
-        error_ax.plot(
-            subset["target"],
-            errors_pct,
-            marker="o",
-            label=series,
-            color=BASELINE_COLOR if is_base else CMAP(i % 10),
-            linewidth=2.5 if is_base else 1.8,
-        )
-        for _, row in subset.iterrows():
-            value = row["error_rate"]
-            if pd.notna(value):
-                error_ax.annotate(
-                    f"{float(value) * 100.0:.2f}%",
-                    (row["target"], float(value) * 100.0),
-                    fontsize=8.5,
-                    fontweight="bold",
-                    textcoords="offset points",
-                    xytext=(8, 7),
-                    bbox=ANNOT_BBOX,
-                )
-    error_ax.set_xlabel("offered load (req/s)")
-    error_ax.set_ylabel("error rate (%)")
-    error_ax.set_title("Error rate (%)")
-    error_ax.grid(alpha=0.3)
     handles, labels = axes.flat[0].get_legend_handles_labels()
     if handles:
         fig.legend(
@@ -401,6 +431,8 @@ def plot_axis_detail(
     """Bar charts at steady load over scaling lines, p50 above p99."""
     if rate.empty and conc.empty:
         return None
+    rate = _with_report_metrics(rate) if not rate.empty else rate
+    conc = _with_report_metrics(conc) if not conc.empty else conc
     reference = rate if not rate.empty else conc
     order = sorted(reference["series"].unique(), key=_sort_key(reference))
     baselines = (
@@ -409,18 +441,34 @@ def plot_axis_detail(
         else set()
     )
 
+    cols = max(len(DETAIL_P50), len(DETAIL_P99))
     rows = 4 if not conc.empty else 2
-    fig, axes = plt.subplots(rows, 3, figsize=(14, 4 * rows))
-    axes = axes.reshape(rows, 3)
+    fig, axes = plt.subplots(rows, cols, figsize=(4.0 * cols, 3.7 * rows))
+    axes = axes.reshape(rows, cols)
 
     def bars(axes_row, metrics):
         indexed = rate.drop_duplicates("series").set_index("series").reindex(order)
         for ax, (column, label) in zip(axes_row, metrics):
-            ax.bar(order, indexed[column], color=_colors(order, baselines))
+            bars = ax.bar(order, indexed[column], color=_colors(order, baselines))
             ax.set_title(label)
             ax.set_xlabel(param)
             ax.tick_params(axis="x", rotation=30, labelsize=8)
             ax.grid(axis="y", alpha=0.3)
+            for bar, value in zip(bars, indexed[column].tolist()):
+                text = _fmt_metric_value(value)
+                if text:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2.0,
+                        bar.get_height(),
+                        text,
+                        ha="center",
+                        va="bottom",
+                        fontsize=7.5,
+                        fontweight="bold",
+                        bbox=ANNOT_BBOX,
+                    )
+        for ax in axes_row[len(metrics) :]:
+            ax.axis("off")
 
     def lines(axes_row, metrics, legend=False):
         for ax, (column, label) in zip(axes_row, metrics):
@@ -440,6 +488,8 @@ def plot_axis_detail(
             ax.set_xlabel("concurrent users")
             ax.set_title(label)
             ax.grid(alpha=0.3)
+        for ax in axes_row[len(metrics) :]:
+            ax.axis("off")
         if legend:
             axes_row[0].legend(title=param, fontsize=8, loc="best")
 

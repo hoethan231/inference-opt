@@ -7,7 +7,7 @@ name: baseline-xs
 description: Current default config for Laguna XS NVFP4.
 bucket: rtx6000-tp1-xs
 model: laguna-xs-2.1-nvfp4
-workloads: [sync]
+workloads: [sync, throughput]
 
 strategy:
   kind: single
