@@ -1,8 +1,8 @@
 {
   "metadata": {
     "labels": {
-      "name": "coding-agent-automatic-sweep",
-      "description": "Coding-agent workload sweeping offered rate levels."
+      "name": "coding-agent-throughput",
+      "description": "Coding-agent workload sweep."
     }
   },
   "spec": {
@@ -20,10 +20,9 @@
       }
     },
     "profile": {
-      "kind": "poisson",
-      "rate": [0.5, 1, 4, 8, 16],
-      "max_concurrency": 64,
-      "rampup_duration": 30.0,
+      "kind": "sweep",
+      "sweep_size": 4,
+      "strategy_type": "constant",
       "warmup": 30.0
     },
     "data": [
@@ -32,35 +31,25 @@
         "prefix_buckets": [
           {
             "bucket_weight": 70,
-            "prefix_count": 8,
-            "prefix_tokens": 20480
+            "prefix_count": 1,
+            "prefix_tokens": 30480
           },
           {
             "bucket_weight": 30,
-            "prefix_count": 4,
-            "prefix_tokens": 36864
+            "prefix_count": 1,
+            "prefix_tokens": 56864
           }
         ],
-        "prompt_tokens": 512,
-        "prompt_tokens_stdev": 2048,
-        "prompt_tokens_min": 32,
-        "prompt_tokens_max": 8192,
-        "output_tokens": 256,
-        "output_tokens_stdev": 1024,
-        "output_tokens_min": 32,
-        "output_tokens_max": 4096,
+        "prompt_tokens": 1024,
+        "output_tokens": 1024,
         "turns": 20,
-        "tool_call_turns": 15,
-        "tool_response_tokens": 1024,
-        "tool_response_tokens_stdev": 2048,
-        "tool_response_tokens_min": 32,
-        "tool_response_tokens_max": 8192
+        "tool_call_turns": 15
       }
-    ],
+    ], 
     "constraints": [
       {
         "kind": "max_duration",
-        "seconds": 300
+        "seconds": 900
       },
       {
         "kind": "max_global_error_rate",
