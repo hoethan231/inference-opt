@@ -51,3 +51,10 @@ workloads:
       Coding-agent traffic as a constant rates. Measures
       behavior under fixed offered load / saturation.
   
+  throughput:
+    file: coding-agent-throughput.json
+    code: tp
+    note: >-
+      Coding-agent traffic in throughput probe mode; pushes concurrency
+      toward max sustainable request completion rate.
+  
