@@ -4,10 +4,10 @@
 #   ./bench run baseline
 
 name: baseline-xs
-description: Current default config for Laguna XS.
+description: Current default config for Laguna XS NVFP4.
 bucket: rtx6000-tp1-xs
-model: laguna-xs-2.1
-workloads: [sync, sweep]
+model: laguna-xs-2.1-nvfp4
+workloads: [sync]
 
 strategy:
   kind: single

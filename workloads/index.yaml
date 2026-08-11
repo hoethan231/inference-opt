@@ -35,11 +35,19 @@ workloads:
     file: coding-agent-sync.json
     code: sync
     note: >-
-      Synchronous profile at a fixed low offered rate; useful for stable
-      low-pressure latency baselines.
+      Synchronous profile 1 request at a time; useful for stable
+      latency baselines.
 
   sweep:
     file: coding-agent-sweep.json
     code: sweep
     note: >-
       Automatic sweep profile to find max capacity.
+  
+  rate-constant:
+    file: coding-agent-rate-constant.json
+    code: rate-constant
+    note: >-
+      Coding-agent traffic as a constant rates. Measures
+      behavior under fixed offered load / saturation.
+  

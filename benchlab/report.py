@@ -28,6 +28,7 @@ from .store import RunRecord
 
 CMAP = plt.get_cmap("tab10")
 BASELINE_COLOR = "#d62728"
+ANNOT_BBOX = dict(boxstyle="round,pad=0.22", fc="white", ec="#333333", alpha=0.92, lw=0.8)
 
 # Above this, a run's latency numbers describe its survivors rather than the load
 # it was given, so the report says so explicitly.
@@ -113,8 +114,10 @@ def plot_rate_overview(df: pd.DataFrame, path: Path, title: str) -> None:
     _save(fig, path)
 
 
-def plot_scaling(df: pd.DataFrame, path: Path, title: str) -> None:
-    """How each run's latency and throughput move with concurrency."""
+def plot_scaling(
+    df: pd.DataFrame, path: Path, title: str, *, target_label: str = "concurrent users"
+) -> None:
+    """How each run's latency and throughput move with target load."""
     order = sorted(df["series"].unique(), key=_sort_key(df))
     baselines = set(df[df["param"] == "baseline"]["series"])
     fig, axes = plt.subplots(2, 3, figsize=(18, 9))
@@ -130,7 +133,7 @@ def plot_scaling(df: pd.DataFrame, path: Path, title: str) -> None:
                 color=BASELINE_COLOR if is_base else CMAP(i % 10),
                 linewidth=2.5 if is_base else 1.6,
             )
-        ax.set_xlabel("concurrent users")
+        ax.set_xlabel(target_label)
         ax.set_ylabel(label)
         ax.set_title(label)
         ax.grid(alpha=0.3)
@@ -143,12 +146,14 @@ def plot_scaling(df: pd.DataFrame, path: Path, title: str) -> None:
         fontsize=7,
         bbox_to_anchor=(0.5, -0.03),
     )
-    fig.suptitle(f"{title} — scaling with concurrency", fontsize=13)
+    fig.suptitle(f"{title} — scaling with {target_label}", fontsize=13)
     fig.tight_layout(rect=(0, 0.08, 1, 0.96))
     _save(fig, path)
 
 
-def plot_frontier(df: pd.DataFrame, path: Path, title: str) -> None:
+def plot_frontier(
+    df: pd.DataFrame, path: Path, title: str, *, point_label: str = "target"
+) -> None:
     """Latency against throughput: the tradeoff you actually pick a config on."""
     order = sorted(df["series"].unique(), key=_sort_key(df))
     baselines = set(df[df["param"] == "baseline"]["series"])
@@ -195,9 +200,129 @@ def plot_frontier(df: pd.DataFrame, path: Path, title: str) -> None:
         ax.set_title(label)
         ax.grid(alpha=0.3)
     axes[0].legend(fontsize=7, loc="best")
-    fig.suptitle(f"{title} — latency/throughput frontier (points labelled with concurrency)", fontsize=13)
+    fig.suptitle(
+        f"{title} — latency/throughput frontier (points labelled with {point_label})",
+        fontsize=13,
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     _save(fig, path)
+
+
+def plot_sweep_rps_detail(df: pd.DataFrame, path: Path, title: str) -> None:
+    """Explicit per-RPS p50/p99 charts for sweep workloads."""
+    order = sorted(df["series"].unique(), key=_sort_key(df))
+    baselines = set(df[df["param"] == "baseline"]["series"])
+    fig, axes = plt.subplots(5, 2, figsize=(16, 19))
+    panels = [
+        ("ttft_ms_p50", "TTFT p50 (ms)"),
+        ("ttft_ms_p99", "TTFT p99 (ms)"),
+        ("itl_ms_p50", "ITL p50 (ms)"),
+        ("itl_ms_p99", "ITL p99 (ms)"),
+        ("tps_p50", "Total throughput p50, tokens/s"),
+        ("tps_p99", "Total throughput p99, tokens/s"),
+        ("output_tps_p50", "Generation throughput p50, tokens/s"),
+        ("output_tps_p99", "Generation throughput p99, tokens/s"),
+        ("rps_mean", "Request completion rate avg, req/s"),
+    ]
+    for ax, (column, label) in zip(axes.flat[:9], panels):
+        for i, series in enumerate(order):
+            subset = df[df["series"] == series].sort_values("target")
+            is_base = series in baselines
+            ax.plot(
+                subset["target"],
+                subset[column],
+                marker="o",
+                label=series,
+                color=BASELINE_COLOR if is_base else CMAP(i % 10),
+                linewidth=2.5 if is_base else 1.8,
+            )
+            for _, row in subset.iterrows():
+                value = row[column]
+                if pd.notna(value):
+                    ax.annotate(
+                        f"{float(value):.1f}",
+                        (row["target"], value),
+                        fontsize=8.5,
+                        fontweight="bold",
+                        textcoords="offset points",
+                        xytext=(8, 7),
+                        bbox=ANNOT_BBOX,
+                    )
+        ax.set_xlabel("offered load (req/s)")
+        ax.set_ylabel(label)
+        ax.set_title(label)
+        ax.grid(alpha=0.3)
+    error_ax = axes.flat[9]
+    for i, series in enumerate(order):
+        subset = df[df["series"] == series].sort_values("target")
+        is_base = series in baselines
+        errors_pct = subset["error_rate"] * 100.0
+        error_ax.plot(
+            subset["target"],
+            errors_pct,
+            marker="o",
+            label=series,
+            color=BASELINE_COLOR if is_base else CMAP(i % 10),
+            linewidth=2.5 if is_base else 1.8,
+        )
+        for _, row in subset.iterrows():
+            value = row["error_rate"]
+            if pd.notna(value):
+                error_ax.annotate(
+                    f"{float(value) * 100.0:.2f}%",
+                    (row["target"], float(value) * 100.0),
+                    fontsize=8.5,
+                    fontweight="bold",
+                    textcoords="offset points",
+                    xytext=(8, 7),
+                    bbox=ANNOT_BBOX,
+                )
+    error_ax.set_xlabel("offered load (req/s)")
+    error_ax.set_ylabel("error rate (%)")
+    error_ax.set_title("Error rate (%)")
+    error_ax.grid(alpha=0.3)
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=min(4, max(1, len(order))),
+            fontsize=7,
+            bbox_to_anchor=(0.5, -0.02),
+        )
+    fig.suptitle(f"{title} — per-RPS sweep metrics (values labelled)", fontsize=13)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.96))
+    _save(fig, path)
+
+
+def write_sweep_rps_table(df: pd.DataFrame, path: Path) -> None:
+    """CSV with one row per sweep point keyed by offered load (req/s)."""
+    columns = [
+        "series",
+        "target",
+        "ttft_ms_p50",
+        "ttft_ms_p99",
+        "itl_ms_p50",
+        "itl_ms_p99",
+        "tps_p50",
+        "tps_p99",
+        "output_tps_p50",
+        "output_tps_p99",
+        "rps_mean",
+        "requests_successful",
+        "error_rate",
+    ]
+    table = df[columns].copy().sort_values(["series", "target"])
+    table = table.rename(columns={"target": "offered_rps"})
+    table["error_rate_pct"] = table["error_rate"] * 100.0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(path, index=False)
+    try:
+        shown = path.relative_to(settings.REPO)
+    except ValueError:
+        shown = path
+    util.step(f"wrote {shown}")
 
 
 def _axis_key(rows: pd.DataFrame, records: dict[str, RunRecord]) -> str | None:
@@ -408,10 +533,56 @@ def build(
             subset = overview_df[overview_df["workload"] == workload]
             mode = subset["mode"].iloc[0]
             if mode == "rate":
-                plot_rate_overview(subset, out_dir / f"overview_{workload}.png", f"{title} · {workload}")
-            else:
+                if subset["target"].nunique() > 1:
+                    plot_scaling(
+                        subset,
+                        out_dir / f"overview_{workload}.png",
+                        f"{title} · {workload}",
+                        target_label="offered load (req/s)",
+                    )
+                    plot_frontier(
+                        subset,
+                        out_dir / f"frontier_{workload}.png",
+                        f"{title} · {workload}",
+                        point_label="offered req/s",
+                    )
+                    plot_sweep_rps_detail(
+                        subset,
+                        out_dir / f"sweep_rps_{workload}.png",
+                        f"{title} · {workload}",
+                    )
+                    write_sweep_rps_table(subset, out_dir / f"sweep_rps_{workload}.csv")
+                else:
+                    plot_rate_overview(
+                        subset, out_dir / f"overview_{workload}.png", f"{title} · {workload}"
+                    )
+            elif mode == "concurrent":
                 plot_scaling(subset, out_dir / f"overview_{workload}.png", f"{title} · {workload}")
                 plot_frontier(subset, out_dir / f"frontier_{workload}.png", f"{title} · {workload}")
+            elif mode == "sweep":
+                plot_scaling(
+                    subset,
+                    out_dir / f"overview_{workload}.png",
+                    f"{title} · {workload}",
+                    target_label="offered load (req/s)",
+                )
+                plot_frontier(
+                    subset,
+                    out_dir / f"frontier_{workload}.png",
+                    f"{title} · {workload}",
+                    point_label="offered req/s",
+                )
+                plot_sweep_rps_detail(
+                    subset,
+                    out_dir / f"sweep_rps_{workload}.png",
+                    f"{title} · {workload}",
+                )
+                write_sweep_rps_table(subset, out_dir / f"sweep_rps_{workload}.csv")
+            else:
+                util.warn(
+                    f"unknown workload mode '{mode}' for '{workload}'; using rate overview"
+                )
+                plot_rate_overview(subset, out_dir / f"overview_{workload}.png", f"{title} · {workload}")
 
     # Per-axis detail figures, for experiments that varied named knobs.
     for axis in sorted(axis_params):

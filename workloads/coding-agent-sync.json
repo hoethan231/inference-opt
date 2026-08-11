@@ -20,8 +20,7 @@
       }
     },
     "profile": {
-      "kind": "concurrent",
-      "streams": [1],
+      "kind": "synchronous",
       "warmup": 30.0
     },
     "data": [
@@ -39,20 +38,10 @@
             "prefix_tokens": 36864
           }
         ],
-        "prompt_tokens": 512,
-        "prompt_tokens_stdev": 2048,
-        "prompt_tokens_min": 32,
-        "prompt_tokens_max": 8192,
-        "output_tokens": 256,
-        "output_tokens_stdev": 1024,
-        "output_tokens_min": 32,
-        "output_tokens_max": 4096,
+        "prompt_tokens": 1024,
+        "output_tokens": 1024,
         "turns": 20,
-        "tool_call_turns": 15,
-        "tool_response_tokens": 1024,
-        "tool_response_tokens_stdev": 2048,
-        "tool_response_tokens_min": 32,
-        "tool_response_tokens_max": 8192
+        "tool_call_turns": 15
       }
     ],
     "constraints": [
