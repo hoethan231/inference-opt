@@ -22,6 +22,7 @@ import matplotlib
 matplotlib.use("Agg")  # headless: everything is written to PNG
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from . import ingest, settings, util
@@ -138,7 +139,7 @@ def plot_rate_overview(df: pd.DataFrame, path: Path, title: str) -> None:
     cols = 2
     rows = int(math.ceil(len(OVERVIEW_METRICS) / cols))
     fig, axes = plt.subplots(rows, cols, figsize=(20, max(height, 3.3 * rows)))
-    flat_axes = axes.flat if hasattr(axes, "flat") else [axes]
+    flat_axes = list(axes.flat) if hasattr(axes, "flat") else [axes]
     for ax, (column, label) in zip(flat_axes, OVERVIEW_METRICS):
         bars = ax.barh(labels, ordered[column], color=_colors(labels, baselines))
         ax.invert_yaxis()
@@ -159,7 +160,7 @@ def plot_rate_overview(df: pd.DataFrame, path: Path, title: str) -> None:
                     fontweight="bold",
                     bbox=ANNOT_BBOX,
                 )
-    for ax in list(flat_axes)[len(OVERVIEW_METRICS) :]:
+    for ax in flat_axes[len(OVERVIEW_METRICS) :]:
         ax.axis("off")
     fig.suptitle(f"{title} — steady offered load", fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
@@ -176,7 +177,7 @@ def plot_scaling(
     cols = 2
     rows = int(math.ceil(len(OVERVIEW_METRICS) / cols))
     fig, axes = plt.subplots(rows, cols, figsize=(18, 3.4 * rows))
-    flat_axes = axes.flat if hasattr(axes, "flat") else [axes]
+    flat_axes = list(axes.flat) if hasattr(axes, "flat") else [axes]
     for ax, (column, label) in zip(flat_axes, OVERVIEW_METRICS):
         for i, series in enumerate(order):
             subset = df[df["series"] == series].sort_values("target")
@@ -193,9 +194,9 @@ def plot_scaling(
         ax.set_ylabel(label)
         ax.set_title(label)
         ax.grid(alpha=0.3)
-    for ax in list(flat_axes)[len(OVERVIEW_METRICS) :]:
+    for ax in flat_axes[len(OVERVIEW_METRICS) :]:
         ax.axis("off")
-    handles, labels = list(flat_axes)[0].get_legend_handles_labels()
+    handles, labels = flat_axes[0].get_legend_handles_labels()
     fig.legend(
         handles,
         labels,
@@ -267,11 +268,10 @@ def plot_frontier(
 
 
 def plot_sweep_rps_detail(df: pd.DataFrame, path: Path, title: str) -> None:
-    """Explicit per-RPS p50/p99 charts for sweep workloads."""
+    """Categorical sweep view: sync, X1..XN RPS, throughput."""
     df = _with_report_metrics(df)
     order = sorted(df["series"].unique(), key=_sort_key(df))
     baselines = set(df[df["param"] == "baseline"]["series"])
-    fig, axes = plt.subplots(5, 2, figsize=(16, 19))
     panels = [
         ("ttft_ms_p50", "TTFT p50 (ms)"),
         ("ttft_ms_p99", "TTFT p99 (ms)"),
@@ -282,36 +282,101 @@ def plot_sweep_rps_detail(df: pd.DataFrame, path: Path, title: str) -> None:
         ("output_tps_p50", "Generation throughput p50, tokens/s"),
         ("output_tps_p99", "Generation throughput p99, tokens/s"),
         ("rps_mean", "Request completion rate avg, req/s"),
+        ("error_rate_pct", "Error rate (%)"),
+        ("req_conc_mean", "Request concurrency mean"),
+        ("req_conc_p50", "Request concurrency p50"),
+        ("req_conc_p99", "Request concurrency p99"),
     ]
-    for ax, (column, label) in zip(axes.flat[:9], panels):
+    cols = 2
+    rows = int(math.ceil(len(panels) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(18, 3.7 * rows))
+
+    stage_labels: list[str] = []
+    stage_rows_per_series: dict[str, pd.DataFrame] = {}
+    offered_map: list[str] = []
+    for series in order:
+        subset = df[df["series"] == series].copy()
+        stype = subset["strategy_type"].fillna("").astype(str).str.lower()
+        sync = subset[stype == "synchronous"]
+        throughput = subset[stype == "throughput"]
+        constant = subset[stype == "constant"].copy()
+        if not constant.empty:
+            constant["offered_rps_num"] = pd.to_numeric(constant["offered_rps"], errors="coerce")
+            constant = constant.sort_values(["offered_rps_num", "target"], na_position="last")
+        remainder = subset[~stype.isin({"synchronous", "throughput", "constant"})].sort_values("target")
+        staged = pd.concat([sync.sort_values("target"), constant, remainder, throughput.sort_values("target")])
+        stage_rows_per_series[series] = staged.reset_index(drop=True)
+        if not stage_labels:
+            labels: list[str] = []
+            if not sync.empty:
+                labels.append("sync")
+            for idx, _ in enumerate(constant.itertuples(index=False), 1):
+                pass
+            for row in constant.itertuples(index=False):
+                offered = getattr(row, "offered_rps", None)
+                if offered is not None and pd.notna(offered):
+                    labels.append(f"{float(offered):.3f} RPS")
+                else:
+                    labels.append("constant")
+            labels.extend([f"X? RPS" for _ in remainder.itertuples(index=False)])
+            if not throughput.empty:
+                throughput_offered = pd.to_numeric(throughput["offered_rps"], errors="coerce")
+                if throughput_offered.notna().any():
+                    labels.append(f"throughput (offered {float(throughput_offered.max()):.3f} RPS)")
+                else:
+                    labels.append("throughput (offered: probe)")
+            stage_labels = labels
+            if not constant.empty:
+                for idx, row in enumerate(constant.itertuples(index=False), 1):
+                    offered = getattr(row, "offered_rps", None)
+                    if offered is not None and pd.notna(offered):
+                        offered_map.append(f"X{idx}={float(offered):.6f}")
+
+    x = np.arange(len(stage_labels))
+    width = 0.8 / max(1, len(order))
+    flat_axes = list(axes.flat) if hasattr(axes, "flat") else [axes]
+    for ax, (column, label) in zip(flat_axes, panels):
         for i, series in enumerate(order):
-            subset = df[df["series"] == series].sort_values("target")
+            staged = stage_rows_per_series.get(series, pd.DataFrame())
+            values = (
+                pd.to_numeric(staged[column], errors="coerce").tolist()
+                if column in staged
+                else []
+            )
+            if len(values) < len(stage_labels):
+                values = values + [np.nan] * (len(stage_labels) - len(values))
+            values = values[: len(stage_labels)]
             is_base = series in baselines
-            ax.plot(
-                subset["target"],
-                subset[column],
-                marker="o",
+            pos = x + (i - (len(order) - 1) / 2.0) * width
+            bars = ax.bar(
+                pos,
+                values,
+                width=width,
                 label=series,
                 color=BASELINE_COLOR if is_base else CMAP(i % 10),
-                linewidth=2.5 if is_base else 1.8,
             )
-            for _, row in subset.iterrows():
-                value = row[column]
-                if pd.notna(value):
-                    ax.annotate(
-                        f"{float(value):.1f}",
-                        (row["target"], value),
-                        fontsize=8.5,
+            for bar, value in zip(bars, values):
+                text = _fmt_metric_value(value)
+                if text:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2.0,
+                        bar.get_height(),
+                        text,
+                        ha="center",
+                        va="bottom",
+                        fontsize=7.5,
                         fontweight="bold",
-                        textcoords="offset points",
-                        xytext=(8, 7),
                         bbox=ANNOT_BBOX,
                     )
-        ax.set_xlabel("offered load (req/s)")
+        ax.set_xlabel("sweep stage")
         ax.set_ylabel(label)
         ax.set_title(label)
-        ax.grid(alpha=0.3)
-    handles, labels = axes.flat[0].get_legend_handles_labels()
+        ax.grid(axis="y", alpha=0.3)
+        ax.set_xticks(x)
+        ax.set_xticklabels(stage_labels, rotation=20)
+    for ax in flat_axes[len(panels) :]:
+        ax.axis("off")
+    handles, labels = flat_axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(
             handles,
@@ -321,8 +386,98 @@ def plot_sweep_rps_detail(df: pd.DataFrame, path: Path, title: str) -> None:
             fontsize=7,
             bbox_to_anchor=(0.5, -0.02),
         )
-    fig.suptitle(f"{title} — per-RPS sweep metrics (values labelled)", fontsize=13)
+    offered_note = f" | constant offered RPS: {', '.join(offered_map)}" if offered_map else ""
+    fig.suptitle(
+        f"{title} — sweep stage bars (metrics + concurrency){offered_note}",
+        fontsize=13,
+    )
     fig.tight_layout(rect=(0, 0.06, 1, 0.96))
+    _save(fig, path)
+
+
+def plot_sweep_stage_concurrency(df: pd.DataFrame, path: Path, title: str) -> None:
+    """Per-stage request concurrency bars (mean/p50/p99)."""
+    df = _with_report_metrics(df)
+    order = sorted(df["series"].unique(), key=_sort_key(df))
+    baselines = set(df[df["param"] == "baseline"]["series"])
+
+    stage_labels: list[str] = []
+    stage_rows_per_series: dict[str, pd.DataFrame] = {}
+    for series in order:
+        subset = df[df["series"] == series].copy()
+        stype = subset["strategy_type"].fillna("").astype(str).str.lower()
+        sync = subset[stype == "synchronous"]
+        throughput = subset[stype == "throughput"]
+        constant = subset[stype == "constant"].copy()
+        if not constant.empty:
+            constant["offered_rps_num"] = pd.to_numeric(constant["offered_rps"], errors="coerce")
+            constant = constant.sort_values(["offered_rps_num", "target"], na_position="last")
+        remainder = subset[~stype.isin({"synchronous", "throughput", "constant"})].sort_values("target")
+        staged = pd.concat([sync.sort_values("target"), constant, remainder, throughput.sort_values("target")])
+        stage_rows_per_series[series] = staged.reset_index(drop=True)
+        if not stage_labels:
+            labels: list[str] = []
+            if not sync.empty:
+                labels.append("sync")
+            for row in constant.itertuples(index=False):
+                offered = getattr(row, "offered_rps", None)
+                labels.append(f"{float(offered):.3f} RPS" if offered is not None and pd.notna(offered) else "constant")
+            labels.extend(["X? RPS" for _ in remainder.itertuples(index=False)])
+            if not throughput.empty:
+                throughput_hint = ""
+                if not constant.empty and pd.notna(constant["offered_rps_num"]).any():
+                    throughput_hint = f" (max {float(constant['offered_rps_num'].max()):.3f} RPS)"
+                labels.append(f"throughput{throughput_hint}")
+            stage_labels = labels
+
+    x = np.arange(len(stage_labels))
+    width = 0.8 / max(1, len(order))
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
+    panels = [
+        ("req_conc_mean", "Request concurrency mean"),
+        ("req_conc_p50", "Request concurrency p50"),
+        ("req_conc_p99", "Request concurrency p99"),
+    ]
+    for ax, (column, title_text) in zip(axes, panels):
+        for i, series in enumerate(order):
+            staged = stage_rows_per_series.get(series, pd.DataFrame())
+            values = pd.to_numeric(staged[column], errors="coerce").tolist() if column in staged else []
+            if len(values) < len(stage_labels):
+                values = values + [np.nan] * (len(stage_labels) - len(values))
+            values = values[: len(stage_labels)]
+            is_base = series in baselines
+            pos = x + (i - (len(order) - 1) / 2.0) * width
+            bars = ax.bar(
+                pos,
+                values,
+                width=width,
+                label=series,
+                color=BASELINE_COLOR if is_base else CMAP(i % 10),
+            )
+            for bar, value in zip(bars, values):
+                text = _fmt_metric_value(value)
+                if text:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2.0,
+                        bar.get_height(),
+                        text,
+                        ha="center",
+                        va="bottom",
+                        fontsize=7.5,
+                        fontweight="bold",
+                        bbox=ANNOT_BBOX,
+                    )
+        ax.set_title(title_text)
+        ax.set_xlabel("sweep stage")
+        ax.set_ylabel("concurrency")
+        ax.grid(axis="y", alpha=0.3)
+        ax.set_xticks(x)
+        ax.set_xticklabels(stage_labels, rotation=20)
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="lower center", ncol=min(4, max(1, len(order))), fontsize=7)
+    fig.suptitle(f"{title} — sweep stage vs request concurrency", fontsize=13)
+    fig.tight_layout(rect=(0, 0.07, 1, 0.94))
     _save(fig, path)
 
 
@@ -340,6 +495,9 @@ def write_sweep_rps_table(df: pd.DataFrame, path: Path) -> None:
         "output_tps_p50",
         "output_tps_p99",
         "rps_mean",
+        "req_conc_mean",
+        "req_conc_p50",
+        "req_conc_p99",
         "requests_successful",
         "error_rate",
     ]
@@ -610,21 +768,9 @@ def build(
                 plot_scaling(subset, out_dir / f"overview_{workload}.png", f"{title} · {workload}")
                 plot_frontier(subset, out_dir / f"frontier_{workload}.png", f"{title} · {workload}")
             elif mode == "sweep":
-                plot_scaling(
-                    subset,
-                    out_dir / f"overview_{workload}.png",
-                    f"{title} · {workload}",
-                    target_label="offered load (req/s)",
-                )
-                plot_frontier(
-                    subset,
-                    out_dir / f"frontier_{workload}.png",
-                    f"{title} · {workload}",
-                    point_label="offered req/s",
-                )
                 plot_sweep_rps_detail(
                     subset,
-                    out_dir / f"sweep_rps_{workload}.png",
+                    out_dir / f"overview_{workload}.png",
                     f"{title} · {workload}",
                 )
                 write_sweep_rps_table(subset, out_dir / f"sweep_rps_{workload}.csv")
