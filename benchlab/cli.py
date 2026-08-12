@@ -10,6 +10,7 @@ from pathlib import Path
 from . import (
     compare,
     doctor,
+    ingest,
     kube as kube_mod,
     migrate,
     model_registry,
@@ -312,6 +313,22 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
+    if args.json:
+        json_path = Path(args.json)
+        if args.all or args.model or args.suffix or args.all_suffixes or args.include_failed:
+            util.die(
+                "--json cannot be combined with --all/--model/--suffix/--all-suffixes/--include-failed"
+            )
+        frame = ingest.frame_from_benchmark_json(json_path, workload=args.workload_name)
+        title = args.experiment or json_path.stem
+        out_dir = (
+            Path(args.out_dir)
+            if args.out_dir
+            else settings.REPORTS_DIR / "json" / util.sanitize(json_path.stem)
+        )
+        report.build_from_frame(frame, out_dir, title, param=args.param)
+        return 0
+
     # A suffixed group is a separate sweep — often measured against a different
     # workload — so it is excluded from the default view rather than blended in.
     suffix = None if args.all_suffixes else (args.suffix or "")
@@ -679,9 +696,21 @@ def build_parser() -> argparse.ArgumentParser:
         "report", help="plots for recorded runs"
     )
     report_parser.add_argument("experiment", nargs="?", help="experiment to report on")
+    report_parser.add_argument(
+        "--json",
+        help="path to a raw GuideLLM benchmarks.json file to plot directly",
+    )
     report_parser.add_argument("--all", action="store_true", help="every recorded run")
     report_parser.add_argument("--param", help="drill into one swept axis")
     report_parser.add_argument("--model", help="restrict to one model")
+    report_parser.add_argument(
+        "--workload-name",
+        help="workload label to use with --json (default: JSON filename stem)",
+    )
+    report_parser.add_argument(
+        "--out-dir",
+        help="override report output directory (works with --json)",
+    )
     report_parser.add_argument(
         "--suffix",
         help="plot the runs carrying this tag suffix instead of the base runs",

@@ -705,15 +705,14 @@ def warn_unusable(df: pd.DataFrame) -> None:
         util.step("their latency numbers describe the requests that survived, not the load")
 
 
-def build(
-    records: list[RunRecord],
+def _build_from_frame(
+    df: pd.DataFrame,
+    by_tag: dict[str, RunRecord],
     out_dir: Path,
     title: str,
     *,
     param: str | None = None,
 ) -> None:
-    by_tag = {r.tag: r for r in records}
-    df = ingest.frame(records)
     overview_df = df[~df["derived_axis"]] if "derived_axis" in df.columns else df
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -826,3 +825,26 @@ def build(
     print()
     util.log(f"plots written to {out_dir}")
     util.step(f"two runs side by side, with numbers: ./bench compare <tag> <tag>")
+
+
+def build(
+    records: list[RunRecord],
+    out_dir: Path,
+    title: str,
+    *,
+    param: str | None = None,
+) -> None:
+    by_tag = {r.tag: r for r in records}
+    df = ingest.frame(records)
+    _build_from_frame(df, by_tag, out_dir, title, param=param)
+
+
+def build_from_frame(
+    df: pd.DataFrame,
+    out_dir: Path,
+    title: str,
+    *,
+    param: str | None = None,
+) -> None:
+    """Plot an already prepared ingest-style frame."""
+    _build_from_frame(df, {}, out_dir, title, param=param)

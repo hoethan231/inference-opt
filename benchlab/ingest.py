@@ -342,3 +342,59 @@ def result_is_usable(path: Path) -> bool:
             return handle.read().rstrip().endswith(b"}")
     except OSError:
         return False
+
+
+def _mode_from_benchmarks(benchmarks: list[dict[str, Any]]) -> str:
+    """Infer workload mode from strategy fields in raw GuideLLM records."""
+    has_rate = False
+    has_concurrency = False
+    for benchmark in benchmarks:
+        strategy = ((benchmark or {}).get("config") or {}).get("strategy") or {}
+        if strategy.get("rate") is not None or strategy.get("rate_per_second") is not None:
+            has_rate = True
+        if any(
+            strategy.get(key) is not None
+            for key in ("streams", "concurrency", "max_concurrency", "stream_count", "worker_count")
+        ):
+            has_concurrency = True
+    if has_rate:
+        return "rate"
+    if has_concurrency:
+        return "concurrent"
+    return "rate"
+
+
+def frame_from_benchmark_json(path: Path, *, workload: str | None = None) -> pd.DataFrame:
+    """Parse a standalone GuideLLM benchmarks.json into report-ready rows."""
+    try:
+        payload = json.loads(path.read_text())
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        util.die(f"failed to read '{path}': {exc}")
+    benchmarks = payload.get("benchmarks") or []
+    if not benchmarks:
+        util.die(f"'{path}' has no benchmarks to report")
+
+    mode = _mode_from_benchmarks(benchmarks)
+    rows = [
+        {"workload": workload or path.stem, "mode": mode, **_measurements(benchmark, mode, index, [])}
+        for index, benchmark in enumerate(benchmarks)
+    ]
+    df = pd.DataFrame(rows)
+    stem = util.sanitize(path.stem) or "json"
+    tag = f"json-{stem}"
+    df["tag"] = tag
+    df["experiment"] = "json"
+    df["model"] = "json-input"
+    df["strategy"] = "json"
+    df["param"] = "unknown"
+    df["value"] = tag
+    df["label"] = tag
+    df["suffix"] = ""
+    df["status"] = "success"
+    df["topology"] = "json"
+    df["gpus"] = 0
+    df["derived_axis"] = False
+    df["axis_context"] = ""
+    df["value_display"] = tag
+    df["series"] = tag
+    return df
