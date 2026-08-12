@@ -1,7 +1,7 @@
 {
   "metadata": {
     "labels": {
-      "name": "coding-agent-throughput",
+      "name": "coding-agent-sweep",
       "description": "Coding-agent workload sweep."
     }
   },
@@ -21,7 +21,7 @@
     },
     "profile": {
       "kind": "sweep",
-      "sweep_size": 4,
+      "sweep_size": 5,
       "strategy_type": "constant",
       "warmup": 30.0
     },

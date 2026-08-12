@@ -31,6 +31,7 @@ CACHE_VERSION = 1
 # (GuideLLM metric key, our column prefix)
 METRIC_SPECS = [
     ("request_latency", "latency_s"),
+    ("request_concurrency", "req_conc"),
     ("time_to_first_token_ms", "ttft_ms"),
     ("time_per_output_token_ms", "tpot_ms"),
     ("inter_token_latency_ms", "itl_ms"),
@@ -73,12 +74,15 @@ def _target(benchmark: dict[str, Any], mode: str, index: int, targets: list[floa
 def _measurements(benchmark: dict[str, Any], mode: str, index: int, targets: list[float]):
     """Just the numbers: no run metadata, so this is safe to cache."""
     metrics = benchmark.get("metrics") or {}
+    strategy = (benchmark.get("config") or {}).get("strategy") or {}
     totals = metrics.get("request_totals") or {}
     errored = totals.get("errored") or 0
     total = totals.get("total") or 0
 
     row: dict[str, Any] = {
         "target": _target(benchmark, mode, index, targets),
+        "strategy_type": str(strategy.get("type_") or strategy.get("kind") or "").lower(),
+        "offered_rps": strategy.get("rate", strategy.get("rate_per_second")),
         "duration_s": round(float(benchmark.get("duration") or 0), 1),
         "requests_total": total,
         "requests_successful": totals.get("successful") or 0,
@@ -147,7 +151,18 @@ def _rows_for(record: RunRecord, *, refresh: bool = False) -> list[dict[str, Any
         mode, targets = _workload_shape(workload_name)
         fingerprint = _fingerprint(path)
         entry = cache["workloads"].get(workload_name)
-        if not refresh and entry and entry.get("fingerprint") == fingerprint:
+        cached_rows = (entry.get("rows") or []) if entry else []
+        cache_missing_keys = bool(cached_rows) and any(
+            (
+                "strategy_type" not in row
+                or "offered_rps" not in row
+                or "req_conc_mean" not in row
+                or "req_conc_p50" not in row
+                or "req_conc_p99" not in row
+            )
+            for row in cached_rows[:3]
+        )
+        if not refresh and entry and entry.get("fingerprint") == fingerprint and not cache_missing_keys:
             measurements = entry.get("rows") or []
         else:
             extracted = _extract(path, mode, targets)
