@@ -210,6 +210,126 @@ def plot_scaling(
     _save(fig, path)
 
 
+def _throughput_cap(workload_name: str) -> int | None:
+    prefix = "throughput-c"
+    if not str(workload_name).startswith(prefix):
+        return None
+    suffix = str(workload_name)[len(prefix) :]
+    return int(suffix) if suffix.isdigit() else None
+
+
+def plot_throughput_cap_consolidated(
+    df: pd.DataFrame, path: Path, title: str, *, style: str
+) -> None:
+    """Throughput at different max concurrency levels."""
+    frame = _with_report_metrics(df).copy()
+    frame["cap"] = frame["workload"].map(_throughput_cap)
+    frame = frame[frame["cap"].notna()].copy()
+    if frame.empty:
+        return
+    frame["cap"] = frame["cap"].astype(int)
+    order_series = sorted(frame["series"].unique(), key=_sort_key(frame))
+    caps = sorted(frame["cap"].unique())
+    baselines = set(frame[frame["param"] == "baseline"]["series"])
+
+    cols = 2
+    rows = int(math.ceil(len(OVERVIEW_METRICS) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(18, 3.5 * rows))
+    flat_axes = list(axes.flat) if hasattr(axes, "flat") else [axes]
+
+    for ax, (column, label) in zip(flat_axes, OVERVIEW_METRICS):
+        if style == "line":
+            for i, series in enumerate(order_series):
+                subset = (
+                    frame[frame["series"] == series]
+                    .sort_values("cap")
+                    .drop_duplicates(subset=["cap"], keep="last")
+                )
+                is_base = series in baselines
+                ax.plot(
+                    subset["cap"],
+                    subset[column],
+                    marker="o",
+                    label=series,
+                    color=BASELINE_COLOR if is_base else CMAP(i % 10),
+                    linewidth=2.5 if is_base else 1.8,
+                )
+                for _, row in subset.iterrows():
+                    text = _fmt_metric_value(row[column])
+                    if text:
+                        ax.annotate(
+                            text,
+                            (row["cap"], row[column]),
+                            fontsize=7.5,
+                            fontweight="bold",
+                            textcoords="offset points",
+                            xytext=(6, 6),
+                            bbox=ANNOT_BBOX,
+                        )
+        else:
+            x = np.arange(len(caps))
+            width = 0.8 / max(1, len(order_series))
+            for i, series in enumerate(order_series):
+                subset = (
+                    frame[frame["series"] == series]
+                    .sort_values("cap")
+                    .drop_duplicates(subset=["cap"], keep="last")
+                )
+                values_by_cap = {
+                    int(row["cap"]): pd.to_numeric(row[column], errors="coerce")
+                    for _, row in subset.iterrows()
+                }
+                values = [values_by_cap.get(cap, np.nan) for cap in caps]
+                is_base = series in baselines
+                pos = x + (i - (len(order_series) - 1) / 2.0) * width
+                bars = ax.bar(
+                    pos,
+                    values,
+                    width=width,
+                    label=series,
+                    color=BASELINE_COLOR if is_base else CMAP(i % 10),
+                )
+                for bar, value in zip(bars, values):
+                    text = _fmt_metric_value(value)
+                    if text:
+                        ax.text(
+                            bar.get_x() + bar.get_width() / 2.0,
+                            bar.get_height(),
+                            text,
+                            ha="center",
+                            va="bottom",
+                            fontsize=7.0,
+                            fontweight="bold",
+                            bbox=ANNOT_BBOX,
+                        )
+            ax.set_xticks(np.arange(len(caps)))
+            ax.set_xticklabels([str(cap) for cap in caps])
+        ax.set_xlabel("max concurrency")
+        ax.set_ylabel(label)
+        ax.set_title(label)
+        ax.grid(axis="y" if style == "bar" else "both", alpha=0.3)
+        ax.set_xlim(min(caps) - 0.5, max(caps) + 0.5) if style == "line" else None
+
+    for ax in flat_axes[len(OVERVIEW_METRICS) :]:
+        ax.axis("off")
+    handles, labels = flat_axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=min(4, max(1, len(order_series))),
+            fontsize=7,
+            bbox_to_anchor=(0.5, -0.02),
+        )
+    fig.suptitle(
+        f"{title} · throughput combined across max concurrency levels ({'line' if style == 'line' else 'bar'})",
+        fontsize=13,
+    )
+    fig.tight_layout(rect=(0, 0.06, 1, 0.96))
+    _save(fig, path)
+
+
 def plot_frontier(
     df: pd.DataFrame, path: Path, title: str, *, point_label: str = "target"
 ) -> None:
@@ -736,7 +856,28 @@ def _build_from_frame(
         util.log(f"scoped to axis '{axis_params[0]}'")
     else:
         # Overview + frontier across everything that ran.
+        skip_workloads: set[str] = set()
+        cap_frame = overview_df.copy()
+        cap_frame["cap"] = cap_frame["workload"].map(_throughput_cap)
+        cap_rows = cap_frame[cap_frame["cap"].notna()].copy()
+        if cap_rows["cap"].nunique() >= 2:
+            plot_throughput_cap_consolidated(
+                cap_rows,
+                out_dir / "overview_throughput-caps_line.png",
+                title,
+                style="line",
+            )
+            plot_throughput_cap_consolidated(
+                cap_rows,
+                out_dir / "overview_throughput-caps_bar.png",
+                title,
+                style="bar",
+            )
+            skip_workloads = set(cap_rows["workload"].unique())
+
         for workload in sorted(overview_df["workload"].unique()):
+            if workload in skip_workloads:
+                continue
             subset = overview_df[overview_df["workload"] == workload]
             mode = subset["mode"].iloc[0]
             if mode == "rate":

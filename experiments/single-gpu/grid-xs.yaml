@@ -1,0 +1,15 @@
+name: grid-xs
+description: Sweep of scheduler knobs for Laguna XS NVFP4.
+model: laguna-xs-2.1-nvfp4
+workloads: [rate]
+
+strategy:
+  kind: grid
+  axes:
+    - key: MAX_NUM_SEQS
+      note: max concurrent running sequences — the scheduler's bouncer
+      values: ["32", "64", "128", "256", "512", "1024"]
+
+    - key: MAX_NUM_BATCHED_TOKENS
+      note: prefill chunk size — the scheduler's chewer
+      values: ["256", "512", "1024", "2048", "4096", "8192"]

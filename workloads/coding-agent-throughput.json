@@ -21,7 +21,7 @@
     },
     "profile": {
       "kind": "throughput",
-      "max_concurrency": 512,
+      "max_concurrency": 64,
       "rampup_duration": 30.0,
       "warmup": 30.0
     },
