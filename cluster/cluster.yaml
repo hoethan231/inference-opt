@@ -52,7 +52,7 @@ gpu_rivals:
 images:
   # Default engine image. A model file can pin its own with `image:`.
   vllm: vllm/vllm-openai:v0.26.0
-  guidellm: ghcr.io/vllm-project/guidellm:v0.7.3
+  guidellm: ghcr.io/vllm-project/guidellm:v0.6.0
   # Used for the weight-cache probe and the results reader/cleaner pods.
   utility: busybox:1.36
 
@@ -64,5 +64,5 @@ timeouts:
   job_start_s: 300
   probe_s: 600
   preseed_s: 10800
-  bench_slack_pct: 350
-  bench_slack_s: 900
+  bench_slack_pct: 1100
+  bench_slack_s: 21600

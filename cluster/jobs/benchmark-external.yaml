@@ -55,7 +55,8 @@ spec:
               import json, os
               with open("/workloads/__SCENARIO_FILE__") as f:
                   scenario = json.load(f)
-              backend = scenario.setdefault("spec", {}).setdefault("backend", {})
+              scenario.setdefault("backend", "openai_http")
+              backend = scenario.setdefault("backend_kwargs", {})
               backend["target"] = "__EXTERNAL_TARGET__"
               backend["request_format"] = "__EXTERNAL_REQUEST_FORMAT__"
               backend["validate_backend"] = False
@@ -66,12 +67,16 @@ spec:
                   json.dump(scenario, f)
               PY
               echo "GuideLLM workload '__WORKLOAD_LABEL__' -> __EXTERNAL_FULL_ENDPOINT__  (tag __TAG_LABEL__)"
-              exec guidellm run \
+              exec guidellm benchmark run \
+                --target "__EXTERNAL_TARGET__" \
+                --request-type chat_completions \
+                --model "${OPENAI_MODEL}" \
                 --scenario /tmp/scenario.json \
-                --tokenizer "{\"kind\":\"huggingface_auto\",\"model\":\"${MODEL_NAME}\",\"load_kwargs\":{\"trust_remote_code\":true}}" \
-                --output kind=console \
-                --output kind=json,path=__RESULTS_MOUNT__/__OUT_BASE__.json \
-                --output kind=html,path=__RESULTS_MOUNT__/__OUT_BASE__.html
+                --processor "${MODEL_NAME}" \
+                --processor-args '{"trust_remote_code": true}' \
+                --backend-kwargs "{\"validate_backend\": false, \"stream\": true, \"api_key\": \"${OPENAI_API_KEY}\", \"extras\": {\"body\": {\"model\": \"${OPENAI_MODEL}\"}}}" \
+                --output-dir __RESULTS_MOUNT__ \
+                --outputs "__OUT_BASE__.json,__OUT_BASE__.html"
           resources:
             requests:
               cpu: "2"

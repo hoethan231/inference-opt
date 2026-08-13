@@ -3,7 +3,7 @@
 #
 # `code` is the suffix on the Kubernetes Job name, so keep it short. The shape
 # of a workload (steady rate vs. a ladder of concurrency levels) is read out of
-# the scenario JSON itself — `spec.profile.kind` — so adding a workload here is
+# the scenario JSON itself — `profile.type_` — so adding a workload here is
 # the only step needed to make it selectable:
 #
 #   ./bench run <experiment> --workloads decode-heavy
@@ -44,47 +44,10 @@ workloads:
     note: >-
       Automatic sweep profile to find max capacity.
   
-  rate-constant:
-    file: coding-agent-rate-constant.json
-    code: rate-constant
-    note: >-
-      Coding-agent traffic as a constant rates. Measures
-      behavior under fixed offered load / saturation.
-  
   throughput:
     file: coding-agent-throughput.json
     code: tp
     note: >-
       Coding-agent traffic in throughput probe mode; pushes concurrency
       toward max sustainable request completion rate.
-  
-  throughput-c32:
-    file: coding-agent-throughput-c32.json
-    code: tp32
-    note: >-
-      Throughput probe mode with max_concurrency capped at 32.
-  
-  throughput-c64:
-    file: coding-agent-throughput-c64.json
-    code: tp64
-    note: >-
-      Throughput probe mode with max_concurrency capped at 64.
-  
-  throughput-c128:
-    file: coding-agent-throughput-c128.json
-    code: tp128
-    note: >-
-      Throughput probe mode with max_concurrency capped at 128.
-  
-  throughput-c256:
-    file: coding-agent-throughput-c256.json
-    code: tp256
-    note: >-
-      Throughput probe mode with max_concurrency capped at 256.
-  
-  throughput-c512:
-    file: coding-agent-throughput-c512.json
-    code: tp512
-    note: >-
-      Throughput probe mode with max_concurrency capped at 512.
   

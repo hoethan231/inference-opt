@@ -200,6 +200,9 @@ def _external_backend(endpoint: str) -> tuple[str, str]:
     parsed = urlparse(endpoint)
     base = f"{parsed.scheme}://{parsed.netloc}"
     path = (parsed.path or "").rstrip("/")
+    if path.endswith("/v1"):
+        target = base + path[: -len("/v1")]
+        return target.rstrip("/"), "/v1/chat/completions"
     if path.endswith("/v1/chat/completions"):
         target = base + path[: -len("/v1/chat/completions")]
         return target.rstrip("/"), "/v1/chat/completions"

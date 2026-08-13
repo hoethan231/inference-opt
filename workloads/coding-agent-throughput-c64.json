@@ -1,7 +1,7 @@
 {
   "metadata": {
     "labels": {
-      "name": "coding-agent-throughput-c64",
+      "name": "coding-agent-throughput",
       "description": "Coding-agent throughput probe capped at max_concurrency=64."
     }
   },

@@ -60,12 +60,15 @@ spec:
               # runnable by hand; point them at the in-cluster Service.
               sed "s#http://localhost:8000#${SVC}#" /workloads/__SCENARIO_FILE__ > /tmp/scenario.json
               echo "GuideLLM workload '__WORKLOAD_LABEL__' -> ${SVC}  (tag __TAG_LABEL__)"
-              exec guidellm run \
+              exec guidellm benchmark run \
+                --target "${SVC}" \
+                --request-type chat_completions \
+                --model "${MODEL_NAME}" \
                 --scenario /tmp/scenario.json \
-                --tokenizer "{\"kind\":\"huggingface_auto\",\"model\":\"${MODEL_NAME}\",\"load_kwargs\":{\"trust_remote_code\":true}}" \
-                --output kind=console \
-                --output kind=json,path=__RESULTS_MOUNT__/__OUT_BASE__.json \
-                --output kind=html,path=__RESULTS_MOUNT__/__OUT_BASE__.html
+                --processor "${MODEL_NAME}" \
+                --processor-args '{"trust_remote_code": true}' \
+                --output-dir __RESULTS_MOUNT__ \
+                --outputs "__OUT_BASE__.json,__OUT_BASE__.html"
           resources:
             requests:
               cpu: "2"

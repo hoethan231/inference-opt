@@ -22,9 +22,6 @@ from . import settings, util
 # holding their target load.
 RATE_KINDS = {"poisson", "constant", "rate", "throughput", "synchronous", "sweep"}
 CONCURRENT_KINDS = {"concurrent"}
-# The sweep profile generates sweep_size strategies (synchronous, throughput,
-# then interpolated rates), so it is treated as rate-oriented rather than a
-# single steady rate.
 SWEEP_KINDS = {"sweep"}
 
 
@@ -49,23 +46,23 @@ class Workload:
 
 
 def _profile_shape(scenario: dict[str, Any], path: Path) -> tuple[str, list[float]]:
-    profile = ((scenario.get("spec") or {}).get("profile")) or {}
-    kind = str(profile.get("kind") or "").lower()
-    if kind == "sweep":
-        # A sweep runs multiple rate points in one workload execution; model this
-        # as N targets so deadline estimation scales with sweep_size.
-        try:
-            sweep_size = int(profile.get("sweep_size") or 1)
-        except (TypeError, ValueError):
-            sweep_size = 1
-        sweep_size = max(1, sweep_size)
-        return "sweep", [float(i) for i in range(1, sweep_size + 1)]
+    profile = scenario.get("profile")
+    if isinstance(profile, str):
+        profile = {"type_": profile}
+    elif not isinstance(profile, dict):
+        profile = {}
+    kind = str(profile.get("type_") or profile.get("kind") or "").lower()
     if kind in CONCURRENT_KINDS:
-        streams = profile.get("streams") or profile.get("concurrency") or []
-        targets = [float(s) for s in (streams if isinstance(streams, list) else [streams])]
+        streams = profile.get("streams")
+        if streams is None:
+            streams = scenario.get("rate")
+        streams = (
+            streams if isinstance(streams, list) else [streams] if streams else [1]
+        )
+        targets = [float(s) for s in streams]
         return "concurrent", targets or [1.0]
     if kind in RATE_KINDS:
-        rate = profile.get("rate")
+        rate = profile.get("rate", scenario.get("rate"))
         if rate is None:
             targets = [1.0]
         elif isinstance(rate, list):
@@ -74,7 +71,7 @@ def _profile_shape(scenario: dict[str, Any], path: Path) -> tuple[str, list[floa
             targets = [float(rate)]
         return "rate", targets
     if kind in SWEEP_KINDS:
-        sweep_size = int(profile.get("sweep_size") or 3)
+        sweep_size = int(profile.get("sweep_size") or scenario.get("sweep_size") or 3)
         return "rate", [float(i) for i in range(sweep_size)]
     util.die(
         f"{path}: unsupported profile kind '{kind}'. Known: "
@@ -83,13 +80,17 @@ def _profile_shape(scenario: dict[str, Any], path: Path) -> tuple[str, list[floa
 
 
 def _estimate_seconds(scenario: dict[str, Any], targets: list[float]) -> int:
-    spec = scenario.get("spec") or {}
-    profile = spec.get("profile") or {}
+    profile = scenario.get("profile")
+    profile = profile if isinstance(profile, dict) else {}
     per_target = 0.0
-    for constraint in spec.get("constraints") or []:
-        if constraint.get("kind") == "max_duration":
-            per_target += float(constraint.get("seconds") or 0)
-    per_target += float(profile.get("warmup") or 0)
+    constraints = profile.get("constraints") or {}
+    if isinstance(constraints, dict):
+        per_target += float(
+            constraints.get("max_seconds") or constraints.get("max_duration") or 0
+        )
+    warmup = scenario.get("warmup")
+    if warmup is not None:
+        per_target += float(warmup)
     per_target += float(profile.get("rampup_duration") or 0)
     if per_target <= 0:
         per_target = 300.0
