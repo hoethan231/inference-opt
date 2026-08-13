@@ -22,7 +22,7 @@
     "profile": {
       "kind": "constant",
       "rate": [10, 20, 30],
-      "max_concurrency": 64,
+      "max_concurrency": 256,
       "rampup_duration": 30.0,
       "warmup": 30.0
     },

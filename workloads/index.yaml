@@ -58,3 +58,33 @@ workloads:
       Coding-agent traffic in throughput probe mode; pushes concurrency
       toward max sustainable request completion rate.
   
+  throughput-c32:
+    file: coding-agent-throughput-c32.json
+    code: tp32
+    note: >-
+      Throughput probe mode with max_concurrency capped at 32.
+  
+  throughput-c64:
+    file: coding-agent-throughput-c64.json
+    code: tp64
+    note: >-
+      Throughput probe mode with max_concurrency capped at 64.
+  
+  throughput-c128:
+    file: coding-agent-throughput-c128.json
+    code: tp128
+    note: >-
+      Throughput probe mode with max_concurrency capped at 128.
+  
+  throughput-c256:
+    file: coding-agent-throughput-c256.json
+    code: tp256
+    note: >-
+      Throughput probe mode with max_concurrency capped at 256.
+  
+  throughput-c512:
+    file: coding-agent-throughput-c512.json
+    code: tp512
+    note: >-
+      Throughput probe mode with max_concurrency capped at 512.
+  
