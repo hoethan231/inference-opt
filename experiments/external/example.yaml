@@ -1,5 +1,6 @@
 name: external
 model: nemotron-3-super-120b
+request_model: nemo64-4096
 endpoint: https://host/v1/chat/completions
 apikey: ""
 workloads: [rate, concurrent]

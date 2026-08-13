@@ -1,0 +1,11 @@
+
+name: test
+description: Default nemotron 3 super 120b model with sweep workload.
+model: nemotron-3-super-120b
+request_model: nemotron-3-super
+endpoint: https://10.160.7.90/enterpriseai
+apikey: "5e4f410e-81f4-49a2-a904-5606c3c6aa29"
+workloads: [rate]
+
+runs:
+  - mns-256-mnbt-2048
